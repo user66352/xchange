@@ -8,6 +8,11 @@ compTwo=clang++
 src="./src"
 build="./bin"
 
+if [ ! -d "$build" ];
+then
+	mkdir bin
+fi
+
 compiler_path=$(which $compOne 2>/dev/null || echo FALSE)
 
 if [ "$compiler_path" = "FALSE" ];
