@@ -30,7 +30,7 @@ Each data frame comes with its own chksum and frame counter to guarantee data in
 That`s already done by TCP but better safe than sorry.  
 
 Regarding limitations, in this initial release a message can be not longer than 1 data frame.  
-That’s currently 1460 Byte.  
+That’s currently 1448 Byte.  
 So longer messages need to be send as a file.  
 
 The largest possible file size should be 4TB.  
