@@ -40,7 +40,7 @@ But the frame counter is a 32bit uint rolling over after 4TB and frame 0 is not 
 
 ## Usage  
 
-Server (xcd):  
+### Server (xcd):  
 
 - forward incoming files to a folder, messages printed to stdout/the terminal  
 
@@ -53,32 +53,56 @@ Server (xcd):
 `xcd -i 192.168.55.10 -p 10111 -o /home/peter/receivedFilesDir -m /home/peter/receivedMessages.txt -e /home/peter/xcdlog.txt`  
 
 
-Client (xcc):  
+- start xcd with a ChaCha20 key file to allow ChaCha20 encrypted connection with a shared/symmetric key  
+
+`xcd -kc chacha20.key -o /path/to/received/files`  
+
+
+### Client (xcc):  
 
 - forward a message with default settings:  
 
 `xcc -s 192.168.55.10 -m "very important message"`  
+
 
 - forward a file to a server with a non-default port:  
 
 `xcc -s 192.168.55.10 -p 10111 -f /file/to/forward/file.bin`  
 
 
+- send a file with limited bandwidth (in byte per sec) and status information  
+
+`xcc -s 192.168.55.10 -p 10111 -b 256000 -S -f /file/to/forward/file.bin`  
+
+
+- send a message encrypted with ChaCha20  
+
+`xcc -s 192.168.55.10 -k chacha20.key -e cha -m 'my message'`  
+
+
+- send a file encrypted with ChaCha20  
+
+`xcc -s 192.168.55.10 -k chacha20.key -e cha -f /file/to/forward/file.bin`  
+
+
 ## Install  
 
-All you need is an installed C++ compiler (g++ or clang++).  
+All thats required is an installed C++ compiler (g++ or clang++) and libcrypto++.  
 
-- Create a new directory:  
+Install libcrypto++ (Debian 13):  
 
-`mkdir xchange`  
+`sudo apt install libcrypto++-dev libcrypto++8t64`  
 
-- cd into this folder:  
 
-`cd xchange`  
+### Compilation  
 
 - clone the repo:  
 
 `git clone https://github.com/user66352/xchange.git`  
+
+- change into the cloned folder:
+
+`cd xchange`  
 
 - make build.sh executable:  
 

@@ -1,34 +1,50 @@
 #!/bin/sh -e
 
-standard=c++20
+standard="c++20"
+optimization="-march=native -O2"
+libs="-lcrypto++"
 
-compOne=g++
-compTwo=clang++
+compiler_primary="clang++"
+compiler_secondary="g++"
 
 src="./src"
 build="./bin"
 
+if [ $# -eq 0 ]
+then
+	options="-Wall -pipe $optimization -std=$standard"
+else
+	if [ "$1" = "DEBUG" ]
+	then
+		echo "Building in DEBUG Mode!"
+		options="-Wall -DDEBUG -pipe $optimization -std=$standard"
+	fi
+fi
+
 if [ ! -d "$build" ];
 then
-	mkdir bin
+	mkdir "bin"
 fi
 
-compiler_path=$(which $compOne 2>/dev/null || echo FALSE)
+compiler_path=$(which $compiler_primary 2>/dev/null || echo FALSE)
 
 if [ "$compiler_path" = "FALSE" ];
 then
-	compiler_path=$(which $compTwo 2>/dev/null || echo FALSE)
+	compiler_path=$(which $compiler_secondary 2>/dev/null || echo FALSE)
 fi
 
 if [ "$compiler_path" = "FALSE" ];
 then
-	echo "Neither clang++ nor g++ was found on the system."
+	echo "Neither $compiler_primary nor $compiler_secondary was found."
 	exit
 fi
 
-echo "using compiler: $compiler_path"
+echo "using: $compiler_path"
 
-$compiler_path -Wall -std=$standard $src/xcc.cpp -o $build/xcc &
-$compiler_path -Wall -std=$standard $src/xcd.cpp -o $build/xcd
+echo "building client xcc"
+$compiler_path $options -DCLIENT $src/xcc.cpp -o $build/xcc $libs &
 
-echo "Client (xcc) and Server (xcd) compiled to folder 'bin'."
+echo "building server xcd"
+$compiler_path $options -DSERVER $src/xcd.cpp -o $build/xcd $libs
+
+echo "Client (xcc) and Server (xcd) compiled to folder $build."
