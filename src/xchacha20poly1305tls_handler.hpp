@@ -30,7 +30,7 @@ void incrementIV(CryptoPP::byte *numArr, size_t size)
     for(int i = 0; i < size; i++)
     {
         numArr[i]++;
-        if(!numArr[i]) break;
+        if(numArr[i] != 0) break;
     }
 }
 
