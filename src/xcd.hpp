@@ -59,6 +59,10 @@ class ConnectionManager
                 {
                     case STATE_RCV_CTRL_FRAME:
                     {
+                        #ifdef DEBUG
+                        std::cout << "DEBUG::ConnectionManager::reading ctrl frame" << std::endl;
+                        #endif
+                        
                         void *buff = static_cast<void *>(&ctrl_header);
                         //reading client ctrl_frame from socket
                         int err = sio::read_from_socket(clientSocket, buff, CTRL_FRAME_SIZE, MSG_WAITALL);
@@ -77,6 +81,8 @@ class ConnectionManager
                                 *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::ERROR::Protocol Error, unsupported CTRL_FRAME." << std::endl;
                             }
                         }
+                        else
+                            state = STATE_STOP_CONNECTION_MANAGER;
                         break;                    
                     }
 

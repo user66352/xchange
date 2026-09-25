@@ -25,16 +25,12 @@ const int MAX_DATA_BYTE_PER_FRAME_XPOLY = MAX_DATA_BLOCK_SIZE - POLY1305TLS_MAC_
 
 NAMESPACE_BEGIN(XChaLocal)
 
-void incrementIV(uint8_t *numArr, size_t size)
+void incrementIV(CryptoPP::byte *numArr, size_t size)
 {
-    int i = 0;
-    uint8_t carry = 1;
-
-    while(i < size)
+    for(int i = 0; i < size; i++)
     {
-        numArr[i] += carry;
-        if(numArr[i] > 0) break;
-        i++;
+        numArr[i]++;
+        if(!numArr[i]) break;
     }
 }
 

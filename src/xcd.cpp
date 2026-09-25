@@ -165,9 +165,9 @@ int mainLoop(int serverSocket, Parameter params)
             case STATE_WAIT_FOR_CONNECTION:
             {
                 clientSocket = 0;
-                
+
                 clientSocket = accept(serverSocket, nullptr, nullptr);
-                
+
                 if(clientSocket > 0)
                     state = STATE_START_CONN_MANAGER;
                 else
