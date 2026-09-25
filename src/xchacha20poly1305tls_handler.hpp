@@ -246,7 +246,6 @@ class XChaCha20Poly1305TLS_Decrypt
         }
 
         // in buffer to read from, out buffer to write to
-        // decrypt without increasing IV so same stream cipher can be reused to finally decrypt the entire frame
         void decryptDataFrameHeader(void *inBuffer, void* outBuffer, size_t length)
         {
             CryptoPP::byte *in = static_cast<CryptoPP::byte *>(inBuffer);
