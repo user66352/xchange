@@ -1,9 +1,22 @@
 # Change Log  
 
+## Ver. 0.1.4  
+
+### Added  
+
+- xchange now supports XChaCha20 with Poly1305 message authentication  
+	* it is being selected with '-e xch' on the client  
+	* at the moment xcd uses the same key for ChaCha20 and XChaCha20
+
+### Changed  
+
+- small code enhacements to increase stability and performance (slightly)  
+
+
 ## Ver. 0.1.3  
 
 - first version supporting encryption  
-- encryption implemented based on crypto++  
+- encryption implemented based on libcrypto++  
 
 ### Added  
 
@@ -14,7 +27,7 @@
 		* `dd if=/dev/urandom of=chacha20.key bs=32 count=1`  
 - bandwidth control in byte per second (client side)  
 - new status option in client (-S)  
-	* transfer status in %  
+	* provides transfer status in %  
 	* summary of amount of bytes successfully transfered  
 
 ### Changed  

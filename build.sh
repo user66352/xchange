@@ -1,7 +1,7 @@
 #!/bin/sh -e
 
 standard="c++20"
-optimization="-march=native -O2"
+optimization="-O2"
 libs="-lcrypto++"
 
 compiler_primary="clang++"
