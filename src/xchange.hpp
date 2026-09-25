@@ -1,3 +1,6 @@
+// TODO:
+// - correctly detect early socket removal, might lead write() to report 0 bytes written instead of returning -1
+
 #ifndef DEFINITIONS_HPP
 #define DEFINITIONS_HPP
 
@@ -18,7 +21,7 @@
 #include <poll.h>
 #include <unistd.h>
 
-std::string program_version_str = "0.1.3";
+std::string program_version_str = "0.1.4";
 
 /* memory size macros */
 #define  B(x)  (x)
@@ -56,6 +59,7 @@ enum PROTOCOL_VERSION : uint16_t
     PV_NONE,
     PV_00_01,       // Default Protocol without encryption
     PV_CHACHA20,    // with CHACHA20 encryption
+    PV_XCHACHA20POLY,   // data encrypted with xchacha20 authenticated with poly1305tls
     PV_LAST
 };
 
@@ -64,6 +68,7 @@ std::vector<PROTOCOL_VERSION> PROTOCOL_VERSION_VEC =
     PV_NONE,
     PV_00_01,
     PV_CHACHA20,
+    PV_XCHACHA20POLY,
     PV_LAST
 };
 
@@ -72,6 +77,7 @@ enum SECURITY_VERSION : uint8_t
 {
     SV_NONE,
     SV_CHACHA20,
+    SV_XCHACHA20POLY,
     SV_LAST
 };
 
@@ -79,8 +85,10 @@ enum SECURITY_VERSION : uint8_t
 //-------------------------------------------------
 //------------ FRAME DEFINITIONS BEGIN ------------
 //-------------------------------------------------
+// all frame structs are packed to make sure they are correctly serialized and de-serialized whene written or read from/to buffer
+// might need a dedicated serialize/deserialize function for compatibility between different architectures / to guarantee correct reconstruction from buffer
 
-struct CTRL_FRAME
+struct __attribute__((__packed__)) CTRL_FRAME
 {
     PROTOCOL_VERSION pv = PV_NONE;
     SECURITY_VERSION sv = SV_NONE;
@@ -88,7 +96,7 @@ struct CTRL_FRAME
     uint8_t transmission_id = 0x00;     // arbitrary number that MUST be the same for all packets belonging to the same stream
 };
 
-struct DATA_FRAME_HEADER
+struct __attribute__((__packed__)) DATA_FRAME_HEADER
 {
     uint32_t order_nbr = 0x00;          // order of packet within the stream
     uint16_t data_size = 0x00;          // count of data bytes within this packet
@@ -97,9 +105,9 @@ struct DATA_FRAME_HEADER
     uint8_t chksum = 0x00;              // checksum of data payload
 };
 
-struct ACK_FRAME
+struct __attribute__((__packed__)) ACK_FRAME
 {
-    const char ack[4] = {'A', 'C', 'K', 0};
+    const char ack[4] = {'A', 'C', 'K', '\0'};
     ACK_ERROR_CODE error = ACK_GENERAL_ERR;
 };
 
@@ -119,9 +127,9 @@ struct XCD_GLOBAL_INFO
     bool filesToStdout = false;                 // if true received files redirected to stdoutStream
 } global_info;
 
-PROTOCOL_VERSION PV_DEFAULT = PV_00_01;
+PROTOCOL_VERSION PV_DEFAULT = PV_00_01;         // default protocol version to use in case version was not specified by user (default is plain text)
 
-const int EOT = -2;     // END-OF-TRANSMISSION
+const int EOT = -2;                 // END-OF-TRANSMISSION
 
 const int BUCKETS_PER_SEC = 5;      // buckets per sec for bandwidth control
 const int TCP_MSS_NORMAL = 1460;    // default
@@ -140,8 +148,8 @@ const int CTRL_FRAME_SIZE = sizeof(CTRL_FRAME);
 const int DATA_FRAME_HEADER_SIZE = sizeof(DATA_FRAME_HEADER);
 
 const int MAX_FILENAME_LENGTH = 128;
-const int MAX_DATA_BLOCK_SIZE = MSS - DATA_FRAME_HEADER_SIZE;    // fit data frame to non-jumbo tcp frame (mtu 1500)
-const int MAX_DATA_FRAME_SIZE = DATA_FRAME_HEADER_SIZE + MAX_DATA_BLOCK_SIZE;
+const int MAX_DATA_BLOCK_SIZE = MSS - DATA_FRAME_HEADER_SIZE;                   // fit data frame to non-jumbo tcp frame (mtu 1500), max user data bytes per frame
+const int MAX_DATA_FRAME_SIZE = DATA_FRAME_HEADER_SIZE + MAX_DATA_BLOCK_SIZE;   // max bytes send at once as one; considered a frame (meta data/header + user data)
 
 
 //----------------------------------------
@@ -497,9 +505,13 @@ namespace sio
                         const char *errName = strerrorname_np(err);
                         const char *errDesc = strerrordesc_np(err);
 
+                        int bytesAv = 0;
+                        ioctl(sock, FIONREAD, bytesAv);
+
                         #ifdef SERVER
                         *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::ERROR::Read retry exceeded: (" << errName << ")\n";
                         *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::ERROR::" << errDesc << std::endl;
+                        *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::INFO:: Bytes available in sock: " << bytesAv << std::endl;
                         #endif
 
                         #ifdef CLIENT
@@ -515,10 +527,14 @@ namespace sio
                 {
                     const char *errName = strerrorname_np(err);
                     const char *errDesc = strerrordesc_np(err);
+
+                    int bytesAv = 0;
+                    ioctl(sock, FIONREAD, bytesAv);
                     
                     #ifdef SERVER
                     *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::ERROR::Error reading from socket: (" << errName << ")\n";
                     *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::ERROR::" << errDesc << std::endl;
+                    *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::INFO:: Bytes available in sock: " << bytesAv << std::endl;
                     #endif
 
                     #ifdef CLIENT

@@ -10,6 +10,7 @@
 #include <iostream>
 #include <filesystem>
 
+#include "help.hpp"
 #include "xcc_protocol_handler.hpp"
 
 struct CliArgs
@@ -26,27 +27,9 @@ struct CliArgs
     bool version = false;
 };
 
-const char *help_text =
-"xchange client help:\n\n \
-Usage:\n \
-client [Options] [Data:text|file]\n\n \
--s <ip> Server IP (IPv4 address, no DNS resolve in this version)\n \
--p <server tcp port> (defaults to 9009 if omitted)\n \
--m 'message string' Send a message.\n \
--f <file_path>  Path of file to send.\n \
--e <encryption mode>    If ommitted datas transfered as plain text/unencrypted. Available encryption modes: cha (ChaCha20)\n \
--k <key file>   Key file used for selected encryption mode.\n \
--S Print transfer statistics.\n \
--b <bandwidth in byte>  Bytes sent per second. By default the client tries to write to the socket as fast as possible. Only applied when sending a file.\n \
--h Print this help.\n \
-The program takes either a message (-m) or a file (-f).\n\n \
-Examples:\n\n \
-client -s 192.168.100.200 -m 'do not forget this message'\n \
-client -s 192.168.100.200 -p 10000 -f /path/to/my/file";
-
 void printHelp()
 {
-    std::cout << help_text << std::endl;
+    std::cout << xcc_help_text << std::endl;
 }
 
 int parseArgs(int argc, char* argv[], CliArgs &args)
@@ -208,6 +191,11 @@ int setSecurityVersion(CliArgs args, TransferInfo &transfer_info)
         transfer_info.secVer = SV_CHACHA20;
         return 0;
     }
+    else if (args.encryptionMode == "xch")
+    {
+        transfer_info.secVer = SV_XCHACHA20POLY;
+        return 0;
+    }
     return 1;
 }
 
@@ -219,17 +207,26 @@ int selectProtocolHandler(TransferInfo transfer_info)
 
     switch (transfer_info.secVer)
     {
-    case SV_CHACHA20:
-    {
-        ProtocolHandler_ChaCha20 ph_chacha20(transfer_info);
-        error = ph_chacha20.getErrState();
-        break;
-    }
-    
-    default:
-        ProtocolHandler_0001 ph(transfer_info);
-        error = ph.getErrState();
-        break;
+        case SV_CHACHA20:
+        {
+            ProtocolHandler_ChaCha20 ph_chacha20(transfer_info);
+            error = ph_chacha20.getErrState();
+            break;
+        }
+
+        case SV_XCHACHA20POLY:
+        {
+            ProtocolHandler_XChaCha20Poly1305TLS ph_xchacha20poly1305(transfer_info);
+            error = ph_xchacha20poly1305.getErrState();
+            break;
+        }
+        
+        default:
+        {
+            ProtocolHandler_0001 ph(transfer_info);
+            error = ph.getErrState();
+            break;
+        }
     }
 
     return error;
@@ -307,7 +304,7 @@ int main(int argc, char* argv[])
     int connErr = connect(clientSocket, reinterpret_cast<struct sockaddr*>(&serverAddress), sizeof(serverAddress));
     if(connErr)
     {
-        std::cerr << "main::Connection to server failed." << std::endl;
+        std::cerr << "main::ERROR::Connection to server failed." << std::endl;
         close(clientSocket);
         return 1;
     }
@@ -319,9 +316,7 @@ int main(int argc, char* argv[])
     int sock_opt_err = setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     if(sock_opt_err)
     {
-        std::cerr << "main::ERROR::Could not set socket timeout.\n"<< std::endl;
-        // close(clientSocket);
-        // return 1;
+        std::cerr << "main::WARNING::Could not set socket timeout.\n"<< std::endl;
     }
 
     // select and start ProtocolHandler

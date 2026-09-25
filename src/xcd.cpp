@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "xcd.hpp"
+#include "help.hpp"
 
 
 void sigint_handler(int s)
@@ -61,19 +62,7 @@ uint16_t getPort(std::string port_str)
 
 void printHelp()
 {
-    const char *helpText =
-"-i <IPv4>              - IP the server will listen on, if omitted will default to any (0.0.0.0)\n\n\
--p <port>               - TCP port for incoming connections, if omitted defaults to 9009\n\n\
--o <out_folder>         - download folder to store incoming files, if omitted the file will be redirected to stdout\n\
-                          incompatible with omitting -m\n\n\
--m <msg_file>           - file to store incoming messages, if omitted messages will be printed to stdout\n\
-                          incompatible with omitting -o\n\n\
--e <log_file>           - path to file containing log messages, if omitted errors are redirected to stderr\n\n\
--kc <ChaCha20 key file> - Key file used to decrypt ChaCha20 streams. If not set ChaCha20 connections will be refused.\n\
--h                      - print this help\n\n\
--v                      - print version";
-
-    std::cout << helpText << std::endl;
+    std::cout << xcd_help_text << std::endl;
 }
 
 void printVersion()
@@ -176,7 +165,9 @@ int mainLoop(int serverSocket, Parameter params)
             case STATE_WAIT_FOR_CONNECTION:
             {
                 clientSocket = 0;
+                
                 clientSocket = accept(serverSocket, nullptr, nullptr);
+                
                 if(clientSocket > 0)
                     state = STATE_START_CONN_MANAGER;
                 else
@@ -289,7 +280,7 @@ int main(int argc, char* argv[])
     err = listen(serverSocket, 1);
     if(err)
     {
-        *global_info.stderrStream << "main::Error setting up server socket to listen at port: " << (int) params.port << std::endl;
+        *global_info.stderrStream << "main::Error setting up server socket to listen at port: " << static_cast<int>(params.port) << std::endl;
         cleanUp();
         return(1);
     }

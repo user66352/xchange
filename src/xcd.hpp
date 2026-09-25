@@ -31,6 +31,7 @@ class ConnectionManager
             return valid;
         }
 
+        // TODO: review flag valid test
         // returns 1 if flags valid, 0 if not
         int validFlags(uint8_t fl)
         {
@@ -118,10 +119,32 @@ class ConnectionManager
                                 break;
                             }
 
+                            case PV_XCHACHA20POLY:
+                            {
+                                #ifdef DEBUG
+                                std::cout << "DEBUG::ProtocolHandler_XChaCha20Poly1305 selected" << std::endl;
+                                #endif
+
+                                if(!params.chacha20KeyFile.size())
+                                {
+                                    *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::WARNING::XCHACHA20POLY Connection refused (keyFile empty)." << std::endl;
+                                    state = STATE_STOP_CONNECTION_MANAGER;
+                                    break;
+                                }
+
+                                ProtocolHandler_XChaCha20Poly1305 ph_xchacha20poly(clientSocket, params, ctrl_header);
+                                if(ph_xchacha20poly.getError())
+                                {
+                                    *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::ERROR::ProtocolHandler_XChaCha20Poly1305 returned an error." << std::endl;
+                                    err_state = 1;
+                                }
+                                state = STATE_STOP_CONNECTION_MANAGER;
+                                break;
+                            }
+
                             default:
                                 break;
                         }
-                        break;
                     }
 
                     case STATE_STOP_CONNECTION_MANAGER:

@@ -147,8 +147,12 @@ void scrambleKeyWithIV(CryptoPP::byte *key, CryptoPP::byte *scrambledKey, Crypto
     hash.Final(finalHash);
 
     // scramble key with iv hash
-    for(int i = 0; i < CHACHA20_KEY_LENGTH; i++)
-        scrambledKey[i] = key[i] ^ finalHash[i];
+    uint64_t *scrambled_64 = reinterpret_cast<uint64_t *>(scrambledKey);
+    uint64_t *hash_64 = reinterpret_cast<uint64_t *>(finalHash);
+    uint64_t *key_64 = reinterpret_cast<uint64_t *>(key);
+
+    for(int i = 0; i < 4; i++)
+        scrambled_64[i] = key_64[i] ^ hash_64[i];
 }
 
 void increaseIV(CryptoPP::byte *ivArr)
