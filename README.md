@@ -95,7 +95,7 @@ All thats required is an installed C++ compiler (g++ or clang++) and libcrypto++
 
 Install libcrypto++ (Debian 13):  
 
-`sudo apt install libcrypto++8t64`  
+`sudo apt install libcrypto++-dev libcrypto++8t64`  
 
 
 ### Compilation  
