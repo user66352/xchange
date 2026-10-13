@@ -2,20 +2,20 @@
 #define XCHACHA20POLY1305TLS_HPP
 
 #include <string.h>
-#include <sys/random.h>
 #include <fstream>
-#include <filesystem>
 
-#include <crypto++/cryptlib.h>
-#include <crypto++/poly1305.h>
-#include <crypto++/chacha.h>
+#include <crypto++/chachapoly.h>
 #include <crypto++/osrng.h>
+#include <crypto++/hkdf.h>
 #include <crypto++/sha.h>
 
-const int POLY1305TLS_MAC_SIZE = CryptoPP::Poly1305TLS::DIGESTSIZE;
-const int XCHACHA20_IV_SIZE = CryptoPP::XChaCha20::IV_LENGTH;
-const int XCHACHA20_KEY_SIZE = CryptoPP::XChaCha20::KEYLENGTH;
-const int MAX_DATA_BYTE_PER_FRAME_XPOLY = MAX_DATA_BLOCK_SIZE - POLY1305TLS_MAC_SIZE;
+#include "crypto_interface.hpp"
+
+const int POLY1305_MAC_SIZE = CryptoPP::Poly1305TLS::DIGESTSIZE; // 16
+const int XCHACHA20_IV_SIZE = CryptoPP::XChaCha20::IV_LENGTH;   // 24
+const int XCHACHA20_KEY_SIZE = CryptoPP::XChaCha20::KEYLENGTH;  // 32
+const int MAX_DATA_BYTE_PER_FRAME_XPOLY = MAX_DATA_BLOCK_SIZE - POLY1305_MAC_SIZE;
+const int DATA_FRAME_SIZE_XCHA_POLY = MAX_DATA_FRAME_SIZE - POLY1305_MAC_SIZE;
 
 /*
  ****************************
@@ -38,84 +38,79 @@ void incrementIV(CryptoPP::byte *numArr, size_t size)
 // returns 0 on success, 1 on failure
 int readXChaCha20Key(std::string keyFile, void *buffer)
 {
-    std::filesystem::path filePath = keyFile;
-    std::filesystem::path absolute_path = std::filesystem::absolute(filePath);
-
-    std::ifstream is(absolute_path, std::ifstream::binary);
-
-    is.read(static_cast<char *>(buffer), XCHACHA20_KEY_SIZE);
-
-    int return_val = is.gcount() != XCHACHA20_KEY_SIZE;
-
-    is.close();
-
-    return return_val;
+    return tool::readBinaryKey(keyFile, buffer, XCHACHA20_KEY_SIZE);
 }
 
-void scrambleKeyWithIV(CryptoPP::byte *key, CryptoPP::byte *scrambledKey, CryptoPP::byte* iv)
+void deriveKey(void *ikm, int ikmLength, CryptoPP::byte *salt, int saltLength, CryptoPP::byte *key, int keyLength)
 {
-    CryptoPP::SHA256 hash;
-    CryptoPP::byte finalHash[XCHACHA20_KEY_SIZE];
+    CryptoPP::byte *ikmPointer = static_cast<CryptoPP::byte *>(ikm);
 
-    // hash iv to get a new 256-bit representation
-    hash.Update(iv, XCHACHA20_IV_SIZE);
-    hash.Final(finalHash);
-
-    uint64_t *scrambled_64 = reinterpret_cast<uint64_t *>(scrambledKey);
-    uint64_t *hash_64 = reinterpret_cast<uint64_t *>(finalHash);
-    uint64_t *key_64 = reinterpret_cast<uint64_t *>(key);
-
-    for(int i = 0; i < 4; i++)
-        scrambled_64[i] = key_64[i] ^ hash_64[i];
+    CryptoPP::HKDF<CryptoPP::SHA256> hkdf;
+    hkdf.DeriveKey(key, keyLength, ikmPointer, ikmLength, salt, saltLength, NULL, 0);
 }
 
 NAMESPACE_END
 
 
-class XChaCha20Poly1305TLS_Encrypt
+class XChaCha20Poly1305_Encrypt : public EncryptionInterface
 {
     private:
         CryptoPP::byte iv[XCHACHA20_IV_SIZE];
         CryptoPP::byte key[XCHACHA20_KEY_SIZE];
-        CryptoPP::byte signKey[XCHACHA20_KEY_SIZE];
         CryptoPP::byte sessionKey[XCHACHA20_KEY_SIZE];
-        CryptoPP::XChaCha20::Encryption enc;
-        CryptoPP::Poly1305TLS signer;
+        CryptoPP::XChaCha20Poly1305::Encryption enc;
+        CryptoPP::AutoSeededRandomPool rng;
 
         void initIV()
         {
-            CryptoPP::AutoSeededRandomPool rng;
             rng.GenerateBlock(iv, XCHACHA20_IV_SIZE);
         }
 
     public:
-        XChaCha20Poly1305TLS_Encrypt()
+        XChaCha20Poly1305_Encrypt()
         {
             memset(iv, 0, XCHACHA20_IV_SIZE);
             memset(key, 0, XCHACHA20_KEY_SIZE);
-            memset(signKey, 0, XCHACHA20_KEY_SIZE);
             memset(sessionKey, 0, XCHACHA20_KEY_SIZE);
             initIV();
         }
 
-        ~XChaCha20Poly1305TLS_Encrypt()
+        ~XChaCha20Poly1305_Encrypt()
         {
             memset(key, 0x00, XCHACHA20_KEY_SIZE);
-            memset(signKey, 0x00, XCHACHA20_KEY_SIZE);
             memset(sessionKey, 0x00, XCHACHA20_KEY_SIZE);
         }
 
-        CryptoPP::byte *getIV() { return iv; }
+        std::string getCipherName() override { return std::string("XCHACHA20_POLY1305"); }
+
+        CryptoPP::byte *getIV() override { return iv; }
+
+        int getKeySize() override {return XCHACHA20_KEY_SIZE; }
+
+        int getIVSize() override { return XCHACHA20_IV_SIZE; }
+
+        int getDataBlockSize() override { return MAX_DATA_BYTE_PER_FRAME_XPOLY; }
+
+        int getDataFrameSize() override { return DATA_FRAME_SIZE_XCHA_POLY; }
+
 
         // read 32byte key file and create session key
-        int readKey(std::string keyFile)
+        int readKey(std::string keyFile) override
         {
             int ret = XChaLocal::readXChaCha20Key(keyFile, key);
 
             // create session key
-            XChaLocal::scrambleKeyWithIV(key, sessionKey, iv);
+            deriveKey(key, XCHACHA20_KEY_SIZE, iv, XCHACHA20_IV_SIZE, sessionKey, XCHACHA20_KEY_SIZE);
 
             return ret;
+        }
+
+        void setKey(void *buff) override
+        {
+            memcpy(key, buff, CHACHA20_KEY_LENGTH);
+
+            // create session key
+            deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
         }
 
         // inBuffer  - plain data
@@ -123,134 +118,116 @@ class XChaCha20Poly1305TLS_Encrypt
         // length    - amount of bytes to encrypt
         // return the size of encrypted data + mac
         // return 0 on failure
-        int encrypt(void *inBuffer, void* outBuffer, size_t length)
+        int encrypt(void *inBuffer, void* outBuffer, size_t length) override
         {
-            CryptoPP::byte mac[POLY1305TLS_MAC_SIZE] = {0};
+            CryptoPP::byte mac[POLY1305_MAC_SIZE] = {0};
             CryptoPP::byte *in = static_cast<CryptoPP::byte *>(inBuffer);
             CryptoPP::byte *out = static_cast<CryptoPP::byte *>(outBuffer);
 
-            if(length > MAX_DATA_FRAME_SIZE - POLY1305TLS_MAC_SIZE)     // make sure there is space left for the poly1305 MAC
+            if(length > DATA_FRAME_SIZE_XCHA_POLY)     // make sure there is space left for the poly1305 MAC
             {
                 std::cerr << "xchacha20poly1305tls_handler.hpp::XChaCha20Poly1305TLS_Encrypt::encrypt::Data length too large. No space to add MAC." << std::endl;
                 std::cerr << "xchacha20poly1305tls_handler.hpp::XChaCha20Poly1305TLS_Encrypt::encrypt::frame length: " << length << std::endl;
                 return 0;
             }
 
+            // add padding to frame if data block is not completely filled
+            int paddingSize = DATA_FRAME_SIZE_XCHA_POLY - length;
+            if(paddingSize) rng.GenerateBlock(&in[length] , paddingSize);
+
             XChaLocal::incrementIV(iv, XCHACHA20_IV_SIZE);
 
             // encrypt data
-            enc.SetKeyWithIV(sessionKey, XCHACHA20_KEY_SIZE, iv, XCHACHA20_IV_SIZE);
-            enc.ProcessData(out, in, length);
-
-            // create mac from encrypted data
-            // scramble session key with current iv to create new signing key for mac
-            // XChaLocal::scrambleKeyWithIV(sessionKey->data(), signKey->data(), iv);
-            XChaLocal::scrambleKeyWithIV(sessionKey, signKey, iv);
-            signer.SetKey(signKey, XCHACHA20_KEY_SIZE);
-            signer.Update(out, length);
-            signer.Final(mac);
+            enc.SetKeyWithIV(sessionKey, XCHACHA20_KEY_SIZE, iv);
+            enc.EncryptAndAuthenticate(out, mac, POLY1305_MAC_LENGTH, iv, XCHACHA20_IV_SIZE, NULL, 0, in, DATA_FRAME_SIZE_XCHA_POLY);
 
             // append MAC to out buffer
-            memcpy(&out[length], mac, POLY1305TLS_MAC_SIZE);
+            memcpy(&out[DATA_FRAME_SIZE_XCHA_POLY], mac, POLY1305_MAC_SIZE);
 
-            return length + POLY1305TLS_MAC_SIZE;
+            return DATA_FRAME_SIZE_XCHA_POLY + POLY1305_MAC_SIZE;
         }
 };
 
-class XChaCha20Poly1305TLS_Decrypt
+class XChaCha20Poly1305_Decrypt : public DecryptionInterface
 {
     private:
         CryptoPP::byte iv[XCHACHA20_IV_SIZE];
         CryptoPP::byte key[XCHACHA20_KEY_SIZE];
-        CryptoPP::byte signKey[XCHACHA20_KEY_SIZE];
         CryptoPP::byte sessionKey[XCHACHA20_KEY_SIZE];
-        CryptoPP::XChaCha20::Decryption dec;
-        CryptoPP::Poly1305TLS verifier;
-
-        // buffer:  pointer to encrypted data
-        // mac:     pointer to MAC for this encrypted data
-        // length:  byte count of enc data in buffer
-        // returns 1 if mac confirms buffer integrity; 0 otherwise
-        int verifyData(CryptoPP::byte* buffer, CryptoPP::byte* mac, int length)
-        {
-            XChaLocal::scrambleKeyWithIV(sessionKey, signKey, iv);
-
-            verifier.SetKey(signKey, XCHACHA20_KEY_SIZE);
-            verifier.Update(buffer, length);
-
-            bool ret_value = verifier.Verify(mac);
-
-            return ret_value;
-        }
+        CryptoPP::XChaCha20Poly1305::Decryption dec;
 
     public:
-        XChaCha20Poly1305TLS_Decrypt()
+        XChaCha20Poly1305_Decrypt()
         {
             memset(iv, 0, XCHACHA20_IV_SIZE);
             memset(key, 0, XCHACHA20_KEY_SIZE);
-            memset(signKey, 0, XCHACHA20_KEY_SIZE);
             memset(sessionKey, 0, XCHACHA20_KEY_SIZE);
         }
 
-        ~XChaCha20Poly1305TLS_Decrypt()
+        ~XChaCha20Poly1305_Decrypt()
         {
             memset(key, 0, XCHACHA20_KEY_SIZE);
-            memset(signKey, 0, XCHACHA20_KEY_SIZE);
             memset(sessionKey, 0, XCHACHA20_KEY_SIZE);
         }
 
-        void setIV(void *nonce)
+        std::string getCipherName() override { return std::string("XCHACHA20_POLY1305"); }
+
+        int getKeySize() override {return XCHACHA20_KEY_SIZE; }
+
+        int getIVSize() override { return XCHACHA20_IV_SIZE; }
+
+        int getDataBlockSize() override { return MAX_DATA_BYTE_PER_FRAME_XPOLY; }
+
+        int getDataFrameSize() override { return DATA_FRAME_SIZE_XCHA_POLY; }
+
+        int getMacSize() override { return POLY1305_MAC_SIZE; }
+        
+
+        void setIV(void *nonce) override
         {
             memcpy(iv, nonce, XCHACHA20_IV_SIZE);
         }
 
         // read 32byte key file and create session key
-        int readKey(std::string keyFile)
+        int readKey(std::string keyFile) override
         {
             int ret = XChaLocal::readXChaCha20Key(keyFile, key);
 
             // create session key
-            XChaLocal::scrambleKeyWithIV(key, sessionKey, iv);
+            deriveKey(key, XCHACHA20_KEY_SIZE, iv, XCHACHA20_IV_SIZE, sessionKey, XCHACHA20_KEY_SIZE);
 
             return ret;
+        }
+
+        void setKey(void *buff) override
+        {
+            memcpy(key, buff, CHACHA20_KEY_LENGTH);
+
+            // create session key
+            deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
         }
 
         // inBuffer  - encrypted data (entire frame including mac)
         // outBuffer - buffer receiving the plain data
         // length    - frame length in inBuffer | frame/inBuffer: [data+mac[POLY1305TLS_MAC_SIZE]]
-        // returns 0 on success, 1 on error, error may indicate failing mac authentication
-        int decrypt(void *inBuffer, void* outBuffer, size_t length)
-        {
-
-            int dataLength = length - POLY1305TLS_MAC_SIZE;
-
-            CryptoPP::byte *in = static_cast<CryptoPP::byte *>(inBuffer);
-            CryptoPP::byte *out = static_cast<CryptoPP::byte *>(outBuffer);
-            CryptoPP::byte *mac = static_cast<CryptoPP::byte *>(&in[dataLength]);
-
-            int verified = verifyData(in, mac, dataLength);
-            if(!verified)
-            {
-                *global_info.stderrStream << "xchacha20poly1305tls_handler.hpp::XChaCha20Poly1305TLS_Decrypt::decrypt::Data/MAC verification failed." << std::endl;
-                return 1;
-            }
-
-            dec.SetKeyWithIV(sessionKey, XCHACHA20_KEY_SIZE, iv, XCHACHA20_IV_SIZE);
-            dec.ProcessData(out, in, dataLength);
-
-            return 0;
-        }
-
-        // in buffer to read from, out buffer to write to
-        void decryptDataFrameHeader(void *inBuffer, void* outBuffer, size_t length)
+        // returns 1 on success (authenticated), 0 when mac authentication has failed
+        bool decrypt(void *inBuffer, void* outBuffer, size_t length) override
         {
             CryptoPP::byte *in = static_cast<CryptoPP::byte *>(inBuffer);
             CryptoPP::byte *out = static_cast<CryptoPP::byte *>(outBuffer);
+            CryptoPP::byte *mac = static_cast<CryptoPP::byte *>(&in[DATA_FRAME_SIZE_XCHA_POLY]);
 
             XChaLocal::incrementIV(iv, XCHACHA20_IV_SIZE);
 
             dec.SetKeyWithIV(sessionKey, XCHACHA20_KEY_SIZE, iv);
-            dec.ProcessData(out, in, length);
+            bool verified = dec.DecryptAndVerify(out, mac, POLY1305_MAC_LENGTH, iv, XCHACHA20_IV_SIZE, NULL, 0, in, DATA_FRAME_SIZE_XCHA_POLY);
+
+            if(!verified)
+            {
+                *global_info.stderrStream << tool::current_time_string() << "::XChaCha20Poly1305_handler::decrypt::ERROR::MAC authentication failed." << std::endl;
+            }
+
+            return verified;
         }
 };
 

@@ -1,94 +1,111 @@
 #ifndef CHACHA20_HANDLER_HPP
 #define CHACHA20_HANDLER_HPP
 
-#include "crypto++/cryptlib.h"
-#include "crypto++/chacha.h"
-#include "crypto++/sha.h"
+#include <crypto++/chachapoly.h>
+#include <crypto++/osrng.h>
+#include <crypto++/hkdf.h>
+#include <crypto++/sha.h>
 
-#include <sys/random.h>
-#include <filesystem>
+#include "crypto_interface.hpp"
 
 
-const int CHACHA20_IV_LENGTH = 8;
+const int POLY1305_MAC_LENGTH = 16;
+const int CHACHA20_IV_LENGTH = 12;
 const int CHACHA20_KEY_LENGTH = 32;
-
-void increaseIV(CryptoPP::byte *ivArr);
-int readChaCha20Key(std::string keyFile, void *buffer);
-void scrambleKeyWithIV(CryptoPP::byte *key, CryptoPP::byte *scrambledKey, CryptoPP::byte* iv);
+const int CHACHAPOLY_DATA_FRAME_SIZE = MAX_DATA_FRAME_SIZE - POLY1305_MAC_LENGTH;           // data_frame header + payload
+const int CHACHAPOLY_DATA_BLOCK_SIZE = CHACHAPOLY_DATA_FRAME_SIZE - DATA_FRAME_HEADER_SIZE; // data payload inside data_frame
 
 
-class ChaCha20_Decrypt
+void incrementIV(CryptoPP::byte *numArr, size_t size);
+void deriveKey(void *ikm, int ikmLength, CryptoPP::byte *salt, int saltLength, CryptoPP::byte *key, int keyLength);
+
+class ChaCha20_Decrypt : public DecryptionInterface
 {
     private:
         CryptoPP::byte iv[CHACHA20_IV_LENGTH];
         CryptoPP::byte key[CHACHA20_KEY_LENGTH];
         CryptoPP::byte sessionKey[CHACHA20_KEY_LENGTH];
-        CryptoPP::ChaCha::Decryption dec;
+        CryptoPP::ChaCha20Poly1305::Decryption dec;
 
     public:
         ChaCha20_Decrypt() {}
 
-        void setIV(void *nonce)
+        ~ChaCha20_Decrypt()
+        {
+            memset(key, 0x00, CHACHA20_KEY_LENGTH);
+            memset(sessionKey, 0x00, CHACHA20_KEY_LENGTH);
+        }
+
+        std::string getCipherName() override { return std::string("CHACHA20_POLY1305"); }
+
+        int getIVSize() override { return CHACHA20_IV_LENGTH; }
+
+        int getKeySize() override { return CHACHA20_KEY_LENGTH; }
+
+        int getDataBlockSize() override { return CHACHAPOLY_DATA_BLOCK_SIZE; }
+
+        int getDataFrameSize() override { return CHACHAPOLY_DATA_FRAME_SIZE; }
+
+        int getMacSize() override { return POLY1305_MAC_LENGTH; }
+
+
+        void setIV(void *nonce) override
         {
             memcpy(iv, nonce, CHACHA20_IV_LENGTH);
         }
 
         // read 32byte from key file
-        int readKey(std::string keyFile)
+        int readKey(std::string keyFile) override
         {
-            int ret = readChaCha20Key(keyFile, key);
+            int err = tool::readBinaryKey(keyFile, key, CHACHA20_KEY_LENGTH);
 
             // create session key
-            if(!ret) scrambleKeyWithIV(key, sessionKey, iv);
+            if(!err)
+                deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
 
-            return ret;
+            return err;
         }
 
         // expects a 32byte buffer filled with the new key
-        void setKey(void *buff)
+        void setKey(void *buff) override
         {
             memcpy(key, buff, CHACHA20_KEY_LENGTH);
 
             // create session key
-            scrambleKeyWithIV(key, sessionKey, iv);
+            deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
         }
 
-        // in buffer to read from, out buffer to write to
-        void decrypt(void *inBuffer, void* outBuffer, size_t length)
+        // in buffer to read from, out buffer to write/decrypt to
+        // length: total frame size including mac
+        // return true if verified, false if not verified
+        bool decrypt(void *inBuffer, void* outBuffer, size_t length) override
         {
+            int frame_length = length - POLY1305_MAC_LENGTH;
+
             CryptoPP::byte *in = static_cast<CryptoPP::byte *>(inBuffer);
             CryptoPP::byte *out = static_cast<CryptoPP::byte *>(outBuffer);
+            CryptoPP::byte *mac = static_cast<CryptoPP::byte *>(&in[frame_length]);
+
+            incrementIV(iv, CHACHA20_IV_LENGTH);
 
             dec.SetKeyWithIV(sessionKey, CHACHA20_KEY_LENGTH, iv);
-            dec.ProcessData(out, in, length);
-            increaseIV(iv);
-        }
-
-        // in buffer to read from, out buffer to write to
-        // decrypt without increasing IV so same stream cipher can be reused to finally decrypt the entire frame
-        void decryptDataFrameHeader(void *inBuffer, void* outBuffer, size_t length)
-        {
-            CryptoPP::byte *in = static_cast<CryptoPP::byte *>(inBuffer);
-            CryptoPP::byte *out = static_cast<CryptoPP::byte *>(outBuffer);
-
-            dec.SetKeyWithIV(sessionKey, CHACHA20_KEY_LENGTH, iv);
-            dec.ProcessData(out, in, length);
+            return dec.DecryptAndVerify(out, mac, POLY1305_MAC_LENGTH, iv, CHACHA20_IV_LENGTH, NULL, 0, in, frame_length);
         }
 };
 
-class ChaCha20_Encrypt
+class ChaCha20_Encrypt : public EncryptionInterface
 {
     private:
         CryptoPP::byte iv[CHACHA20_IV_LENGTH];
         CryptoPP::byte key[CHACHA20_KEY_LENGTH];
+        CryptoPP::byte mac[POLY1305_MAC_LENGTH];
         CryptoPP::byte sessionKey[CHACHA20_KEY_LENGTH];
-        CryptoPP::ChaCha::Encryption enc;
+        CryptoPP::ChaCha20Poly1305::Encryption enc;
+        CryptoPP::AutoSeededRandomPool rng;
 
-        int initIV()
+        void initIV()
         {
-            // read random bytes from /dev/urandom
-            ssize_t ret_value = getrandom(iv, CHACHA20_IV_LENGTH, 0);
-            return ret_value;
+            rng.GenerateBlock(iv, CHACHA20_IV_LENGTH);
         }
 
     public:
@@ -97,38 +114,70 @@ class ChaCha20_Encrypt
             initIV();
         }
 
-        CryptoPP::byte *getIV() { return iv; }
-
-        int readKey(std::string keyFile)
+        ~ChaCha20_Encrypt()
         {
-            int ret = readChaCha20Key(keyFile, key);
+            memset(key, 0x00, CHACHA20_KEY_LENGTH);
+            memset(sessionKey, 0x00, CHACHA20_KEY_LENGTH);
+        }
+
+        std::string getCipherName() override { return std::string("CHACHA20_POLY1305"); }
+
+        CryptoPP::byte *getIV() override { return iv; }
+
+        int getIVSize() override { return CHACHA20_IV_LENGTH; }
+
+        int getKeySize() override { return CHACHA20_KEY_LENGTH; }
+
+        int getDataBlockSize() override { return CHACHAPOLY_DATA_BLOCK_SIZE; }
+
+        int getDataFrameSize() override { return CHACHAPOLY_DATA_FRAME_SIZE; }
+
+
+        // reads a binary key file and creates a session key from it
+        // returns 0 on success; 1 on failure
+        int readKey(std::string keyFile) override
+        {
+            int err = tool::readBinaryKey(keyFile, key, CHACHA20_KEY_LENGTH);
 
             // create session key
-            scrambleKeyWithIV(key, sessionKey, iv);
+            if(!err)
+                deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
 
-            return ret;
+            return err;
         }
 
         // expects a 32byte buffer filled with the new key
-        void setKey(void *buff)
+        void setKey(void *buff) override
         {
             memcpy(key, buff, CHACHA20_KEY_LENGTH);
 
             // create session key
-            scrambleKeyWithIV(key, sessionKey, iv);
+            deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
         }
 
-        void encrypt(void *inBuffer, void* outBuffer, size_t length)
+        // length: data frame size in inBuffer (header + data <= CHACHAPOLY_DATA_FRAME_SIZE)
+        int encrypt(void *inBuffer, void* outBuffer, size_t length) override
         {
             CryptoPP::byte *in = static_cast<CryptoPP::byte *>(inBuffer);
             CryptoPP::byte *out = static_cast<CryptoPP::byte *>(outBuffer);
 
+            // add padding to frame if not completely filled
+            int paddingSize = CHACHAPOLY_DATA_FRAME_SIZE - length;
+            if(paddingSize)
+                rng.GenerateBlock(&in[length] , paddingSize);
+
+            incrementIV(iv, CHACHA20_IV_LENGTH);
+
+            // encrypt data
             enc.SetKeyWithIV(sessionKey, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH);
-            enc.ProcessData(out, in, length);
-            increaseIV(iv);
+            enc.EncryptAndAuthenticate(out, mac, POLY1305_MAC_LENGTH, iv, CHACHA20_IV_LENGTH, NULL, 0, in, CHACHAPOLY_DATA_FRAME_SIZE);
+
+            // add MAC to out buffer
+            memcpy(&out[CHACHAPOLY_DATA_FRAME_SIZE], mac, POLY1305_MAC_LENGTH);
+
+            return CHACHAPOLY_DATA_FRAME_SIZE + POLY1305_MAC_LENGTH;
         }
 };
-
 
 
 /*
@@ -137,46 +186,21 @@ class ChaCha20_Encrypt
  ********************
 */
 
-void scrambleKeyWithIV(CryptoPP::byte *key, CryptoPP::byte *scrambledKey, CryptoPP::byte* iv)
+void deriveKey(void *ikm, int ikmLength, CryptoPP::byte *salt, int saltLength, CryptoPP::byte *key, int keyLength)
 {
-    CryptoPP::SHA256 hash;
-    CryptoPP::byte finalHash[CHACHA20_KEY_LENGTH];
+    CryptoPP::byte *ikmPointer = static_cast<CryptoPP::byte *>(ikm);
 
-    // hash iv
-    hash.Update(iv, CHACHA20_IV_LENGTH);
-    hash.Final(finalHash);
-
-    // scramble key with iv hash
-    uint64_t *scrambled_64 = reinterpret_cast<uint64_t *>(scrambledKey);
-    uint64_t *hash_64 = reinterpret_cast<uint64_t *>(finalHash);
-    uint64_t *key_64 = reinterpret_cast<uint64_t *>(key);
-
-    for(int i = 0; i < 4; i++)
-        scrambled_64[i] = key_64[i] ^ hash_64[i];
+    CryptoPP::HKDF<CryptoPP::SHA256> hkdf;
+    hkdf.DeriveKey(key, keyLength, ikmPointer, ikmLength, salt, saltLength, NULL, 0);
 }
 
-void increaseIV(CryptoPP::byte *ivArr)
+void incrementIV(CryptoPP::byte *numArr, size_t size)
 {
-    uint64_t *ivPointer = reinterpret_cast<uint64_t *>(ivArr);
-    (*ivPointer)++;
-}
-
-// reads 32 byte into key array from file, requires a 32 byte key file
-// returns 0 on success, 1 on failure
-int readChaCha20Key(std::string keyFile, void *buffer)
-{
-    std::filesystem::path filePath = keyFile;
-    std::filesystem::path absolute_path = std::filesystem::absolute(filePath);
-
-    std::ifstream is(absolute_path, std::ifstream::binary);
-
-    is.read(static_cast<char *>(buffer), CHACHA20_KEY_LENGTH);
-
-    int return_val = is.gcount() != CHACHA20_KEY_LENGTH;
-
-    is.close();
-
-    return return_val;
+    for(int i = 0; i < size; i++)
+    {
+        numArr[i]++;
+        if(numArr[i] != 0) break;
+    }
 }
 
 #endif

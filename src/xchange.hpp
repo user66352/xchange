@@ -1,9 +1,9 @@
-// TODO:
-// - correctly detect early socket removal, might lead write() to report 0 bytes written instead of returning -1
+// xchange is developed based on libcrypto++ version 8.9.0
 
 #ifndef DEFINITIONS_HPP
 #define DEFINITIONS_HPP
 
+#include <map>
 #include <ctime>
 #include <vector>
 #include <string>
@@ -21,7 +21,7 @@
 #include <poll.h>
 #include <unistd.h>
 
-std::string program_version_str = "0.1.4";
+std::string program_version_str = "0.1.6";
 
 /* memory size macros */
 #define  B(x)  (x)
@@ -30,6 +30,7 @@ std::string program_version_str = "0.1.4";
 #define GB(x) ((x) << 30)
 
 typedef uint8_t byte;
+typedef uint16_t chksum_t;
 
 enum ACK_ERROR_CODE : uint32_t
 {
@@ -60,6 +61,7 @@ enum PROTOCOL_VERSION : uint16_t
     PV_00_01,       // Default Protocol without encryption
     PV_CHACHA20,    // with CHACHA20 encryption
     PV_XCHACHA20POLY,   // data encrypted with xchacha20 authenticated with poly1305tls
+    PV_AES_GCM,
     PV_LAST
 };
 
@@ -69,6 +71,7 @@ std::vector<PROTOCOL_VERSION> PROTOCOL_VERSION_VEC =
     PV_00_01,
     PV_CHACHA20,
     PV_XCHACHA20POLY,
+    PV_AES_GCM,
     PV_LAST
 };
 
@@ -76,16 +79,21 @@ std::vector<PROTOCOL_VERSION> PROTOCOL_VERSION_VEC =
 enum SECURITY_VERSION : uint8_t
 {
     SV_NONE,
+    SV_PLAIN,
     SV_CHACHA20,
     SV_XCHACHA20POLY,
+    SV_AES_GCM,
     SV_LAST
 };
 
+// lookup table to resolve protocol_version into security_version
+// might need to be consolidated later into one
+std::map<PROTOCOL_VERSION, SECURITY_VERSION> secVersionLookupMap = { {PV_00_01, SV_PLAIN}, {PV_CHACHA20, SV_CHACHA20}, {PV_XCHACHA20POLY, SV_XCHACHA20POLY}, {PV_AES_GCM, SV_AES_GCM} };
 
 //-------------------------------------------------
 //------------ FRAME DEFINITIONS BEGIN ------------
 //-------------------------------------------------
-// all frame structs are packed to make sure they are correctly serialized and de-serialized whene written or read from/to buffer
+// all frame structs are packed to make sure they are correctly serialized and de-serialized whene written or read from/to buffer via memcpy
 // might need a dedicated serialize/deserialize function for compatibility between different architectures / to guarantee correct reconstruction from buffer
 
 struct __attribute__((__packed__)) CTRL_FRAME
@@ -99,10 +107,10 @@ struct __attribute__((__packed__)) CTRL_FRAME
 struct __attribute__((__packed__)) DATA_FRAME_HEADER
 {
     uint32_t order_nbr = 0x00;          // order of packet within the stream
+    chksum_t chksum = 0x00;             // checksum of data payload
     uint16_t data_size = 0x00;          // count of data bytes within this packet
     uint8_t flags = 0x00;
-    uint8_t transmission_id = 0x00;     // same as ctrl_frame transmission_id
-    uint8_t chksum = 0x00;              // checksum of data payload
+    uint8_t transmission_id = 0x00;     // same as ctrl_frame transmission_id, identifies a data_frame belonging to a specific stream
 };
 
 struct __attribute__((__packed__)) ACK_FRAME
@@ -132,7 +140,7 @@ PROTOCOL_VERSION PV_DEFAULT = PV_00_01;         // default protocol version to u
 const int EOT = -2;                 // END-OF-TRANSMISSION
 
 const int BUCKETS_PER_SEC = 5;      // buckets per sec for bandwidth control
-const int TCP_MSS_NORMAL = 1460;    // default
+const int TCP_MSS_NORMAL = 1460;    // typical default tcp mss
 const int TCP_MSS_JUMBO = 8960;     // at mtu 9000
 const int DEFAULT_PORT = 9009;
 const int MAX_PORT_NBR = 65535;
@@ -147,10 +155,11 @@ const int ACK_FRAME_SIZE = sizeof(ACK_FRAME);
 const int CTRL_FRAME_SIZE = sizeof(CTRL_FRAME);
 const int DATA_FRAME_HEADER_SIZE = sizeof(DATA_FRAME_HEADER);
 
-const int MAX_FILENAME_LENGTH = 128;
-const int MAX_DATA_BLOCK_SIZE = MSS - DATA_FRAME_HEADER_SIZE;                   // fit data frame to non-jumbo tcp frame (mtu 1500), max user data bytes per frame
-const int MAX_DATA_FRAME_SIZE = DATA_FRAME_HEADER_SIZE + MAX_DATA_BLOCK_SIZE;   // max bytes send at once as one; considered a frame (meta data/header + user data)
+const int MAX_IV_SIZE = 24;                                                     // iv length of XChaCha, set fixed to prevent variable length array warnings
+const int MAX_DATA_FRAME_SIZE = MSS;                                            // max bytes send at once as one; considered a frame (meta data/header + user data)
+const int MAX_DATA_BLOCK_SIZE = MAX_DATA_FRAME_SIZE - DATA_FRAME_HEADER_SIZE;   // fit data frame to non-jumbo tcp frame , max user data bytes per frame
 
+const int MAX_FILENAME_LENGTH = 128;
 
 //----------------------------------------
 //------------ TIMING OPTIONS ------------
@@ -167,6 +176,25 @@ const int64_t XCD_CONFIRM_WAIT_MICROS = 5 * 1000000; // 5 sec
 
 namespace tool
 {
+
+    // reads key_length byte from file to buffer
+    // returns 0 on success, 1 on failure
+    int readBinaryKey(std::string keyFile, void *buffer, int key_length)
+    {
+        std::filesystem::path filePath = keyFile;
+        std::filesystem::path absolute_path = std::filesystem::absolute(filePath);
+
+        std::ifstream is(absolute_path, std::ifstream::binary);
+
+        is.read(static_cast<char *>(buffer), key_length);
+
+        int return_val = is.gcount() != key_length;
+
+        is.close();
+
+        return return_val;
+    }
+
     // takes a pointer to a buffer, returns a hex string of buffer values
     // upperLower controls the case [u:upper, l:lower]
     // returns a string of hex values coresponding to the bytes from buffer
@@ -307,9 +335,11 @@ namespace tool
     }
 
     // create fletcher16 chksum of data_buffer
-    uint16_t fletcher16(const uint8_t *data, size_t len) {
+    chksum_t fletcher16(void *buffer, size_t len) {
         uint32_t c0, c1;
         size_t blocklen;
+
+        uint8_t *data = reinterpret_cast<uint8_t *>(buffer);
         
         for (c0 = c1 = 0; len > 0; ) {
             blocklen = len;
@@ -484,20 +514,24 @@ namespace sio
         return 0;
     }
 
+    // TODO: review retry value
     // returns 0 on success and -1 on error
     int read_from_socket(int sock, void *buff, size_t bufferSize, int flags)
     {
         int ret_value = 0;
         int retry_counter = (1000 / THREAD_PAUSE_TIME_MS) * SOCKET_RCVTIMEO_SEC;    // recv retries timeout
         size_t remaining_bytes = bufferSize;
+        size_t received_bytes = 0;
+
+        char *BufferPointer = static_cast<char *>(buff);
 
         while(remaining_bytes > 0)
         {
-            ret_value = recv(sock, buff, remaining_bytes, flags);
+            ret_value = recv(sock, &BufferPointer[received_bytes], remaining_bytes, flags);
             if(ret_value < 0)
             {
                 int err = errno;
-                if((err == EAGAIN) || (err = EWOULDBLOCK) || (err == EINTR))
+                if((err == EAGAIN) || (err == EWOULDBLOCK) || (err == EINTR))
                 {
                     retry_counter++;
                     if(retry_counter > MAX_READ_RETRY_ON_ERR)
@@ -528,10 +562,9 @@ namespace sio
                     const char *errName = strerrorname_np(err);
                     const char *errDesc = strerrordesc_np(err);
 
+                    #ifdef SERVER
                     int bytesAv = 0;
                     ioctl(sock, FIONREAD, bytesAv);
-                    
-                    #ifdef SERVER
                     *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::ERROR::Error reading from socket: (" << errName << ")\n";
                     *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::ERROR::" << errDesc << std::endl;
                     *global_info.stderrStream << tool::current_time_string() << "::sio::read_from_socket::INFO:: Bytes available in sock: " << bytesAv << std::endl;
@@ -546,6 +579,7 @@ namespace sio
                 }
             }
             remaining_bytes -= ret_value;
+            received_bytes += ret_value;
 
             // make sure recv times out after SOCKET_RCVTIMEO_SEC if nothing is received
             if(remaining_bytes > 0 && ret_value == 0)

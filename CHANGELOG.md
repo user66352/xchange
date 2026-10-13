@@ -1,5 +1,25 @@
 # Change Log  
-
+  
+## Ver. 0.1.6  
+  
+### Added  
+  
+- new encryption mode added: AES-GCM  
+	- selected with xcc option '-e aes'  
+	- uses GCM for message authentication  
+	- requires a 32byte key file (256bit key length)  
+  
+### Changed  
+  
+- all encryption protocols now use message authentication (ChaCha20 and XChaCha20 using Poly1305, AES using GCM)  
+- all data frames now sent with the same length (in text and file mode for all encrypted modes, not in plain mode)  
+	- before encrypting a frame its padded with random data (if necessary)  
+	- this way message length is not longer revealed by the transmitted frame size  
+- using HKDF now to derive the session key  
+- general code restructuring to increase maintainability  
+- xcd keyfile option changed to '-k' (from -kc)  
+  
+  
 ## Ver. 0.1.4  
 
 ### Added  

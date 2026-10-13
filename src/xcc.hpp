@@ -16,6 +16,7 @@ struct TransferInfo
     const char *msg = nullptr;
     const char *filePath = nullptr;
     std::string keyFile = "";
+    PROTOCOL_VERSION pv = PV_NONE;
     SECURITY_VERSION secVer = SV_NONE;
     TransferMode mode = MODE_NONE;
     uint64_t bandwidth = 0;
@@ -36,7 +37,6 @@ class ControlFrame
         {
             resetCtrlFrame();
         }
-
 
         void setFlag(byte flag) { frame_intern.flags |= flag; }
 
@@ -61,9 +61,7 @@ class DataFrame
 
         void setChkSum()
         {
-            // char *bufferPointer = const_cast<char *>(dataPointer);
-            // header.chksum = tool::bufferChkSum(bufferPointer, header.data_size);
-            header.chksum = tool::bufferChkSum(dataPointer, header.data_size);
+            header.chksum = tool::fletcher16(dataPointer, header.data_size);
         }
 
         void constructDataFrame()

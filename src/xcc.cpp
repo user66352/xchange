@@ -10,6 +10,9 @@
 #include <iostream>
 #include <filesystem>
 
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 #include "help.hpp"
 #include "xcc_protocol_handler.hpp"
 
@@ -117,7 +120,8 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
 
     if(args.version)
     {
-        std::cout << "exchange client version: " << program_version_str << std::endl;
+        std::cout << "xchange client\n";
+        std::cout << "version: " << program_version_str << std::endl;
         return 0;
     }
 
@@ -182,52 +186,41 @@ uint16_t getPort(CliArgs &params)
 // returns 0 if supported sec version was found, 1 if sec version could not be determind
 int setSecurityVersion(CliArgs args, TransferInfo &transfer_info)
 {
-    if(!args.encryptionMode.size())
-    {
-        return 0;
-    }
-    else if (args.encryptionMode == "cha")
+    if (args.encryptionMode == "cha")
     {
         transfer_info.secVer = SV_CHACHA20;
+        transfer_info.pv = PV_CHACHA20;
         return 0;
     }
     else if (args.encryptionMode == "xch")
     {
         transfer_info.secVer = SV_XCHACHA20POLY;
+        transfer_info.pv = PV_XCHACHA20POLY;
+        return 0;
+    }
+    else if (args.encryptionMode == "aes")
+    {
+        transfer_info.secVer = SV_AES_GCM;
+        transfer_info.pv = PV_AES_GCM;
+        return 0;
+    }
+    else if (args.encryptionMode.empty())
+    {
+        transfer_info.secVer = SV_PLAIN;
+        transfer_info.pv = PV_00_01;
         return 0;
     }
     return 1;
 }
 
-
+// TODO: needs to select a transmission id that is not used yet in use by any other ongoing connection
 // returns 0 on success, 1 on failure
 int selectProtocolHandler(TransferInfo transfer_info)
 {
     int error = 0;
 
-    switch (transfer_info.secVer)
-    {
-        case SV_CHACHA20:
-        {
-            ProtocolHandler_ChaCha20 ph_chacha20(transfer_info);
-            error = ph_chacha20.getErrState();
-            break;
-        }
-
-        case SV_XCHACHA20POLY:
-        {
-            ProtocolHandler_XChaCha20Poly1305TLS ph_xchacha20poly1305(transfer_info);
-            error = ph_xchacha20poly1305.getErrState();
-            break;
-        }
-        
-        default:
-        {
-            ProtocolHandler_0001 ph(transfer_info);
-            error = ph.getErrState();
-            break;
-        }
-    }
+    DefaultProtocolHandler ph_default(transfer_info);
+    error = ph_default.getErrState();
 
     return error;
 }
@@ -297,7 +290,7 @@ int main(int argc, char* argv[])
     serverAddress.sin_addr.s_addr = htonl(serverIP);
 
     // creating socket
-    int clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
     transfer_info.clientSocket = clientSocket;
 
     // sending connection request

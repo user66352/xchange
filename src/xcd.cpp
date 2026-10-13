@@ -1,7 +1,5 @@
 // implementation of xchange daemon (xcd)
-// Todo for ver 0.1.1:
-// - implement a dedicated read_from_socket function in ConnectionManager - done
-// - log stderr to file - done
+// Todo:
 // - quota for receive folder
 // - setting for max file length
 
@@ -67,7 +65,8 @@ void printHelp()
 
 void printVersion()
 {
-    std::cout << "xchange server ver: " << program_version_str << std::endl;
+    std::cout << "xchange server\n";
+    std::cout << "version: " << program_version_str << std::endl;
 }
 
 void parseArgs(int argc, char* argv[], Parameter &params)
@@ -113,7 +112,7 @@ void parseArgs(int argc, char* argv[], Parameter &params)
             continue;
         }
 
-        if( tmp_str == "-kc" )
+        if( tmp_str == "-k" )
         {
             i++;
             params.chacha20KeyFile = argv[i];

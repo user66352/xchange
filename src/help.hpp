@@ -13,8 +13,9 @@ client [Options] [Data:text|file]\n\n \
 -e <encryption mode>    If ommitted datas transfered as plain text/unencrypted. Available encryption modes: cha (ChaCha20); xch (XChaCha20Poly1305)\n \
 -k <key file>   Key file used for selected encryption mode.\n \
 -S Print transfer statistics.\n \
--b <bandwidth in byte>  Bytes sent per second. By default the client tries to write to the socket as fast as possible. Only applied when sending a file.\n \
+-b <bandwidth in byte>  Bytes sent per second. Used to throttle the transfer throughput. By default the client tries to write to the socket as fast as possible. Only applied when sending a file.\n \
 -h Print this help.\n \
+-v Print version.\n \
 The program takes either a message (-m) or a file (-f).\n\n \
 Examples:\n\n \
 client -s 192.168.100.200 -m 'do not forget this message'\n \
@@ -30,7 +31,7 @@ const char *xcd_help_text =
 -m <msg_file>           - file to store incoming messages, if omitted messages will be printed to stdout\n\
                           incompatible with omitting -o\n\n\
 -e <log_file>           - path to file containing log messages, if omitted errors are redirected to stderr\n\n\
--kc <ChaCha20 key file> - Key file used to decrypt ChaCha20 streams. If not set ChaCha20 connections will be refused.\n\
+-k <key file> 			- Key file used for all encryption methods.\n\n\
 -h                      - print this help\n\n\
 -v                      - print version";
 

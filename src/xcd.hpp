@@ -72,12 +72,11 @@ class ConnectionManager
                             if(ctrlFrameValid())
                             {
                                 connected_version = ctrl_header.pv;
-                                state = STATE_SELECT_PROTOCOL_MANAGER;
+                                state = STATE_START_PROTOCOL_MANAGER;
                             }
                             else
                             {
                                 state = STATE_STOP_CONNECTION_MANAGER;
-                                // TODO: send reason for disconnect to client
                                 *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::ERROR::Protocol Error, unsupported CTRL_FRAME." << std::endl;
                             }
                         }
@@ -86,71 +85,18 @@ class ConnectionManager
                         break;                    
                     }
 
-                    case STATE_SELECT_PROTOCOL_MANAGER:
+                    case STATE_START_PROTOCOL_MANAGER:
                     {
-                        switch (connected_version)
+                        params.sv = secVersionLookupMap.at(connected_version);
+
+                        DefaultProtocolHandler ph_default(clientSocket, params, ctrl_header);
+                        if(ph_default.getError())
                         {
-                            case PV_00_01:
-                            {
-                                ProtocolHandler_0001 ph_default(clientSocket, params, ctrl_header);
-                                if(ph_default.getError())
-                                {
-                                    *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::ERROR::ProtocolHandler_ChaCha20 returned an error." << std::endl;
-                                    err_state = 1;
-                                }
-                                state = STATE_STOP_CONNECTION_MANAGER;
-                                break;
-                            }
-
-                            case PV_CHACHA20:
-                            {
-                                #ifdef DEBUG
-                                std::cout << "DEBUG::ProtocolHandler_ChaCha20 selected" << std::endl;
-                                #endif
-
-                                if(!params.chacha20KeyFile.size())
-                                {
-                                    *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::WARNING::ChaCha20 Connection refused (keyFile empty)." << std::endl;
-                                    state = STATE_STOP_CONNECTION_MANAGER;
-                                    break;
-                                }
-
-                                ProtocolHandler_ChaCha20 ph_chacha20(clientSocket, params, ctrl_header);
-                                if(ph_chacha20.getError())
-                                {
-                                    *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::ERROR::ProtocolHandler_ChaCha20 returned an error." << std::endl;
-                                    err_state = 1;
-                                }
-                                state = STATE_STOP_CONNECTION_MANAGER;
-                                break;
-                            }
-
-                            case PV_XCHACHA20POLY:
-                            {
-                                #ifdef DEBUG
-                                std::cout << "DEBUG::ProtocolHandler_XChaCha20Poly1305 selected" << std::endl;
-                                #endif
-
-                                if(!params.chacha20KeyFile.size())
-                                {
-                                    *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::WARNING::XCHACHA20POLY Connection refused (keyFile empty)." << std::endl;
-                                    state = STATE_STOP_CONNECTION_MANAGER;
-                                    break;
-                                }
-
-                                ProtocolHandler_XChaCha20Poly1305 ph_xchacha20poly(clientSocket, params, ctrl_header);
-                                if(ph_xchacha20poly.getError())
-                                {
-                                    *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::ERROR::ProtocolHandler_XChaCha20Poly1305 returned an error." << std::endl;
-                                    err_state = 1;
-                                }
-                                state = STATE_STOP_CONNECTION_MANAGER;
-                                break;
-                            }
-
-                            default:
-                                break;
+                            *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::ERROR::DefaultProtocolHandler returned an error." << std::endl;
+                            err_state = 1;
                         }
+                        state = STATE_STOP_CONNECTION_MANAGER;
+                        break;
                     }
 
                     case STATE_STOP_CONNECTION_MANAGER:
