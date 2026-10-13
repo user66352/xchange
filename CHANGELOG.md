@@ -16,7 +16,7 @@
 	- before encrypting a frame its padded with random data (if necessary)  
 	- this way message length is not longer revealed by the transmitted frame size  
 - using HKDF now to derive the session key  
-- general code restructuring to increase maintainability  
+- general code restructuring to improve maintainability  
 - xcd keyfile option changed to '-k' (from -kc)  
   
   
