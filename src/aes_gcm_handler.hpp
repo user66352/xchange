@@ -57,7 +57,7 @@ class AES_GCM_Encrypt : public EncryptionInterface
 
         void initIV()
         {
-            rng.GenerateBlock(iv, AES_GCM_KEY_SIZE);
+            rng.GenerateBlock(iv, AES_GCM_IV_SIZE);
         }
 
     public:
