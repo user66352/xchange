@@ -46,6 +46,8 @@ echo "building client xcc"
 $compiler_path $options -DCLIENT $src/xcc.cpp -o $build/xcc $libs &
 
 echo "building server xcd"
-$compiler_path $options -DSERVER $src/xcd.cpp -o $build/xcd $libs
+$compiler_path $options -DSERVER $src/xcd.cpp -o $build/xcd $libs &
+
+wait
 
 echo "Client (xcc) and Server (xcd) compiled to folder $build."
