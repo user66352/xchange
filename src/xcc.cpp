@@ -21,13 +21,17 @@ struct CliArgs
     std::string serverIP = "";
     std::string port = std::to_string(DEFAULT_PORT);
     std::string msg = "";
+    std::string name = "";
+    std::string mode = "";      // [message|file]
     std::string outfile = "";
     std::string bandwidth = "";
     std::string encryptionMode = "";
     std::string keyFile = "";
+    bool progress = false;
     bool stats = false;
     bool help = false;
     bool version = false;
+    bool readStdin = false;
 };
 
 void printHelp()
@@ -49,62 +53,95 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
             continue;
         }
 
-        if( tmp_str == "-p" )
+        // target port
+        if( tmp_str == "-p" || tmp_str == "--port" )
         {
             i++;
             args.port = argv[i];
             continue;
         }
 
-        if( tmp_str == "-m" )
+        // message, triggers message mode
+        if( tmp_str == "-m" || tmp_str == "--message")
         {
             i++;
             args.msg = argv[i];
             continue;
         }
 
-        if( tmp_str == "-e" )
+        // encryption method
+        if( tmp_str == "-e" || tmp_str == "--encryption")
         {
             i++;
             args.encryptionMode = argv[i];
             continue;
         }
 
-        if( tmp_str == "-k" )
+        // keyfile
+        if( tmp_str == "-k" || tmp_str == "--key")
         {
             i++;
             args.keyFile = argv[i];
             continue;
         }
 
-        if( tmp_str == "-f" )
+        // file name/path, triggers file mode
+        if( tmp_str == "-f" || tmp_str == "--file")
         {
             i++;
             args.outfile = argv[i];
             continue;
         }
 
-        if( tmp_str == "-S" )
+        // enable stats
+        if( tmp_str == "-S" || tmp_str == "--stats")
         {
             args.stats = true;
             continue;
         }
 
-        if( tmp_str == "-b" )
+        // enable progress
+        if( tmp_str == "-P" || tmp_str == "--progress" )
+        {
+            args.progress = true;
+            continue;
+        }
+
+        // set bandwidth
+        if( tmp_str == "-b" || tmp_str == "--bandwidth")
         {
             i++;
             args.bandwidth = argv[i];
             continue;
         }
 
-        if( tmp_str == "-h" )
+        // name to be used for file read from stdin
+        if( tmp_str == "-n" || tmp_str == "--name" )
+        {
+            i++;
+            args.name = argv[i];
+            continue;
+        }
+
+        // read from stdin instead of file, triggers data being send in file mode
+        if ( tmp_str == "--stdin" )
+        {
+            i++;
+            args.readStdin = true;
+            args.mode = argv[i];
+            continue;
+        }
+
+        // print help
+        if( tmp_str == "-h" || tmp_str == "--help")
         {
             i++;
             args.help = true;
             break;
         }
 
-        if( tmp_str == "-v" )
+        // print version
+        if( tmp_str == "-v" || tmp_str == "--version")
         {
             i++;
             args.version = true;
@@ -152,6 +189,29 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
         return 1;
     }
 
+    if(args.name.size() & args.outfile.size())
+    {
+        std::cerr << "Filename and name can not be set at the same time." << std::endl;
+        return 1;
+    }
+
+    if(args.readStdin)
+    {
+        if(args.outfile.size()) {
+            std::cerr << "Reading a file incompatible to read from stdin." << std::endl;
+            return 1;
+        }
+
+        if(args.mode == "file" && args.name.empty()) {
+            std::cerr << "When selecting stdin as input for file transfere a file name must be provided (--name)." << std::endl;
+            return 1;
+        }
+
+        if(args.mode == "message" && args.name.size() > 0) {
+            std::cerr << "Stdin message transfere incompatible to option --name." << std::endl;
+            return 1;
+        }
+    }
     return 0;
 }
 
@@ -174,6 +234,7 @@ uint16_t getPort(CliArgs &params)
         std::cerr << "std::out_of_range::" << e.what() << std::endl;
         exit(1);
     }
+
     if(port > 65535)
     {
         std::cerr << "Port can not be greater than 65535." << std::endl;
@@ -186,43 +247,32 @@ uint16_t getPort(CliArgs &params)
 // returns 0 if supported sec version was found, 1 if sec version could not be determind
 int setSecurityVersion(CliArgs args, TransferInfo &transfer_info)
 {
-    if (args.encryptionMode == "cha")
+    if (args.encryptionMode.empty())
     {
-        transfer_info.secVer = SV_CHACHA20;
-        transfer_info.pv = PV_CHACHA20;
-        return 0;
+        transfer_info.secVer = SV_DEFAULT;
+        transfer_info.pv = PV_DEFAULT;
+    } else {
+        transfer_info.secVer = selectionToSecVersionMap[args.encryptionMode];
+        transfer_info.pv = proVersionLookupMap[transfer_info.secVer];
     }
-    else if (args.encryptionMode == "xch")
-    {
-        transfer_info.secVer = SV_XCHACHA20POLY;
-        transfer_info.pv = PV_XCHACHA20POLY;
-        return 0;
-    }
-    else if (args.encryptionMode == "aes")
-    {
-        transfer_info.secVer = SV_AES_GCM;
-        transfer_info.pv = PV_AES_GCM;
-        return 0;
-    }
-    else if (args.encryptionMode.empty())
-    {
-        transfer_info.secVer = SV_PLAIN;
-        transfer_info.pv = PV_00_01;
-        return 0;
-    }
-    return 1;
+
+    if(transfer_info.pv == PV_NONE || transfer_info.secVer == SV_NONE)
+        return 1;
+
+    return 0;
 }
 
 // TODO: needs to select a transmission id that is not used yet in use by any other ongoing connection
 // returns 0 on success, 1 on failure
 int selectProtocolHandler(TransferInfo transfer_info)
 {
-    int error = 0;
+
+    #ifdef DEBUG
+    std::cout << "xcc.cpp::selectProtocolHandler::enter selectProtocolHandler" << std::endl;
+    #endif
 
     DefaultProtocolHandler ph_default(transfer_info);
-    error = ph_default.getErrState();
-
-    return error;
+    return ph_default.getErrState();
 }
 
 int main(int argc, char* argv[])
@@ -250,9 +300,12 @@ int main(int argc, char* argv[])
 
     TransferInfo transfer_info;
     transfer_info.stats = params.stats;
+    transfer_info.progress = params.progress;
+    transfer_info.read_stdin = params.readStdin;
     if(params.keyFile.size()) transfer_info.keyFile = params.keyFile;
     if(params.msg.size() > 0) transfer_info.msg = params.msg.c_str();
     if(params.outfile.size() > 0) transfer_info.filePath = params.outfile.c_str();
+    if(params.name.size() > 0 && params.readStdin) transfer_info.filePath = params.name.c_str();
     if(params.bandwidth.size() > 0)
     {
         try
@@ -279,8 +332,13 @@ int main(int argc, char* argv[])
     }
 
     // set operational mode
-    if(params.msg.size() > 0) transfer_info.mode = MODE_TEXT;
-    if(params.outfile.size() > 0) transfer_info.mode = MODE_FILE;
+    if(params.readStdin) {
+        if(params.mode == "message") transfer_info.mode = MODE_TEXT;
+        if(params.mode == "file") transfer_info.mode = MODE_FILE;
+    } else {
+        if(params.msg.size() > 0) transfer_info.mode = MODE_TEXT;
+        if(params.outfile.size() > 0) transfer_info.mode = MODE_FILE;
+    }
 
     // specifying server address
     serverIP = tool::ip_from_str(params.serverIP);
@@ -290,7 +348,8 @@ int main(int argc, char* argv[])
     serverAddress.sin_addr.s_addr = htonl(serverIP);
 
     // creating socket
-    int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    int clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    // int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
     transfer_info.clientSocket = clientSocket;
 
     // sending connection request
@@ -313,7 +372,11 @@ int main(int argc, char* argv[])
     }
 
     // select and start ProtocolHandler
-    selectProtocolHandler(transfer_info);
+    connErr = selectProtocolHandler(transfer_info);
+    if(connErr) {
+        std::cerr << "An error occurred during transfer!" << std::endl;
+        return 1;
+    }
 
     // close and test if socket transmitted all data without further errors
     int close_error = close(clientSocket);

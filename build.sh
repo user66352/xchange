@@ -10,15 +10,16 @@ compiler_secondary="g++"
 src="./src"
 build="./bin"
 
-if [ $# -eq 0 ]
+options="-Wall -pipe $optimization -std=$standard"
+
+if [ "$1" = "DEBUG" ]
 then
-	options="-Wall -pipe $optimization -std=$standard"
-else
-	if [ "$1" = "DEBUG" ]
-	then
-		echo "Building in DEBUG Mode!"
-		options="-Wall -DDEBUG -pipe $optimization -std=$standard"
-	fi
+	echo "Building in DEBUG Mode!"
+	options="${options} -DDEBUG"
+elif [ "$1" = "static" ]
+then
+	echo "Building statically linked executables!"
+	options="${options} -static"
 fi
 
 if [ ! -d "$build" ];

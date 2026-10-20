@@ -1,4 +1,19 @@
 # Change Log  
+
+## Ver. 0.1.7  
+
+### Added  
+
+- xchange client now accepts data from a pipe (files + messages)
+    - read data from a pipe is selected with new option `--stdin [file|message]`  
+    - when a file (`--stdin file`) is being received via a piped its name must be provided with option `--name`  
+
+### Changed   
+
+- server now closes a connection after 2³² received data frames ( min. 1434byte per data frame; max byte per transmission > 6TB )  
+- client cli options got reworked to reflect feature changes (read from stdin)  
+- some bug fixes  
+  
   
 ## Ver. 0.1.6  
   
@@ -16,7 +31,7 @@
 	- before encrypting a frame its padded with random data (if necessary)  
 	- this way message length is not longer revealed by the transmitted frame size  
 - using HKDF now to derive the session key  
-- general code restructuring to improve maintainability  
+- general code restructuring to increase maintainability  
 - xcd keyfile option changed to '-k' (from -kc)  
   
   

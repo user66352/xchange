@@ -16,10 +16,84 @@ enum ProgramState
     STATE_STOP_CLIENT
 };
 
+struct FileInfo
+{
+    std::string filename = "";
+    bool stdi = false;
+};
+
 ACK_ERROR_CODE getAckFromSocket(int sock);
 int sendDataBuffer(int sock, void* buffer, int length);
 int sendCtrlFramePlain(TransferInfo info, PROTOCOL_VERSION ver);
 int sendCtrlFrameEncryption(TransferInfo info, PROTOCOL_VERSION ver, CryptoPP::byte *iv, int iv_size);
+
+// manage read from stdin and file
+class FileIO
+{
+    private:
+        std::istream *is = nullptr;
+        std::string filename = "";
+        bool stdi = false;
+        int error = 0;
+
+        void init() {
+            
+            if(stdi) {
+                is = &std::cin;
+            }
+            else {
+                std::filesystem::path absolute_path = std::filesystem::absolute(filename);
+                filename = tool::filename_from_path(absolute_path.c_str());
+                is = new std::ifstream(absolute_path, std::ifstream::binary);
+            }
+            
+            if(is->fail()) {
+                *global_info.stderrStream << tool::current_time_string() <<"::xcd_protocol_handler.hpp::FileIO::init::Error::Could not open source file." << std::endl;
+                error = 1;
+            }
+        }
+
+    public:
+        FileIO(FileInfo fi) {
+            stdi = fi.stdi;
+            filename = fi.filename;
+            init();
+        }
+
+        ~FileIO() {
+            if(is != &std::cin) {
+                std::ifstream *ifs = dynamic_cast<std::ifstream *>(is);
+                ifs->close();
+            }
+        }
+
+        // read size bytes to buffer
+        // returns amount of bytes read; return EOT at end of file or -1 on failure
+        int ReadBytes(void *buffer, int size) {
+            char *ioBuffer = static_cast<char *>(buffer);
+
+            if(is->good()) {
+                is->read(ioBuffer, size);
+                return is->gcount();
+            }
+            else if(is->eof()) {
+                return EOT;
+            }
+
+            error = 1;
+            return -1;
+        }
+
+        std::string GetFilename() {
+            return filename;
+        }
+
+        bool isGood() { return is->good(); }
+
+        bool isEOF() { return is->eof(); }
+
+        int ErrorState() { return error; }
+};
 
 class DefaultProtocolHandler
 {
@@ -27,7 +101,9 @@ class DefaultProtocolHandler
         TransferInfo info;
         TransferMode mode = MODE_NONE;
         ProgramState state = STATE_NONE;
+        FileIO *file_io = nullptr;
         Encryption *enc = nullptr;
+        int DATA_BLOCK_SIZE = 0;
         bool encrypted = false;
         char snd_buffer[MAX_DATA_FRAME_SIZE];
         uint32_t frameCounter = 0;
@@ -48,22 +124,58 @@ class DefaultProtocolHandler
             return send_err;
         }
 
+        std::string ReadMessage() {
+
+            std::string msg = "";
+            char strBuffer[MAX_DATA_BLOCK_SIZE + 1];
+
+            FileInfo file_info;
+            file_info.stdi = info.read_stdin;
+
+            if(info.mode == MODE_FILE) {
+                file_info.filename = info.filePath;
+            }
+
+            file_io = new FileIO(file_info);
+            int ret_value = file_io->ReadBytes(strBuffer, DATA_BLOCK_SIZE);
+            if(ret_value == -1) {
+                std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ReadMessage::Error::Could not read message." << std::endl;
+                return msg;
+            }
+
+            strBuffer[ret_value] = 0;
+            msg = strBuffer;
+
+            return msg;
+        }
+
         // returns 0 on success and 1 on failure
-        int sendText()
+        int sendMessage()
         {
+
+            std::string message = "";
             DataFrame data_frame;
 
-            // TODO: test msg length to be not too long
-            // sending data
-            int data_size = strlen(info.msg);
+            if(info.read_stdin) {
+                message = ReadMessage();
+                if(!message.size()) {
+                    std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::sendMessage::Error::Could not read message from stdin." << std::endl;
+                    return 1;
+                }
+            } else {
+                message = info.msg;
+            }
+            
+            int data_size = message.size();
 
-            if(data_size > CHACHAPOLY_DATA_BLOCK_SIZE)
+            if(data_size > DATA_BLOCK_SIZE)
             {
-                std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::sendText::Error::Message too long!" << std::endl;
-                std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::sendText::Info::Message can not be longer than: " << CHACHAPOLY_DATA_BLOCK_SIZE << std::endl;
+                std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::sendMessage::Error::Message too long!" << std::endl;
+                std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::sendMessage::Info::Message can not be longer than: " << DATA_BLOCK_SIZE << std::endl;
                 return 1;
             }
 
+            // sending data
             // first message frame has count 1
             frameCounter = 1;
 
@@ -73,7 +185,7 @@ class DefaultProtocolHandler
             data_frame.setOrder(frameCounter);
 
             // set data in data frame
-            char *data_buffer = const_cast<char *>(info.msg);
+            char *data_buffer = const_cast<char *>(message.c_str());
             data_frame.setData(data_buffer, data_size);
 
             int send_err = SendDataFrame(data_frame);
@@ -96,16 +208,11 @@ class DefaultProtocolHandler
             return 0;
         }
 
-
-
         // returns 0 on success and 1 on failure
         int sendFile()
         {
-            std::string filename = "";
-            uintmax_t fileSize = 0;
             uint32_t bucket = 0;
             uint32_t framesPerBucket = 0;
-
             DataFrame data_frame;
 
             if(info.bandwidth)
@@ -113,48 +220,53 @@ class DefaultProtocolHandler
                 bucket = 1000000 / BUCKETS_PER_SEC;    // 1000000µs per sec
                 int bytesPerBucket = info.bandwidth / BUCKETS_PER_SEC;
                 framesPerBucket = bytesPerBucket / MAX_DATA_FRAME_SIZE;
+
+                if(!framesPerBucket) {
+                    std::cerr << "xcc_protocol_handler.xcc::DefaultProtocolHandler::sendFile::Error::Bandwidth setting too low. (min: " << (int) MAX_DATA_FRAME_SIZE * BUCKETS_PER_SEC << ")" << std::endl;
+                    return 1;
+                }
             }
 
-            const char *path = info.filePath;
-            filename = tool::filename_from_path(path);
-            std::filesystem::path filePath = path;
-            std::filesystem::path absolute_path = std::filesystem::absolute(filePath);
-            fileSize = std::filesystem::file_size(absolute_path);
+            FileInfo file_info;
+            file_info.stdi = info.read_stdin;
+            file_info.filename = info.filePath;
+            file_io = new FileIO(file_info);
 
+            if(file_io->ErrorState()) {
+                std::cerr << "xcc_protocol_handler.xcc::DefaultProtocolHandler::sendFile::Error::Could not open input path." << std::endl;
+                return 1;
+            }
+
+            // send filename
             // create data frame header to transfer filename
             // filename characterized by order_counter == 0 && data_size > 0 && mode binary
             frameCounter = 0;
-            const char *filenamePointer = filename.c_str();
+            std::string filename = file_io->GetFilename();
             data_frame.setFlag(FLAG_DATA_FRAME);
             data_frame.setTransmissionID(info.TransmissionID);
             data_frame.setOrder(frameCounter);
-            data_frame.setData(const_cast<char *>(filenamePointer), filename.size());
+            data_frame.setData(const_cast<char *>(filename.c_str()), filename.size());
 
-            int ret_val = 0;
-
-            ret_val = SendDataFrame(data_frame);
-
+            int ret_val = SendDataFrame(data_frame);
             if(ret_val == -1)
             {
-                std::cerr << "sendFile::Error sending Filename." << std::endl;
+                std::cerr << "xcc_protocol_handler.xcc::DefaultProtocolHandler::sendFile::Error sending filename." << std::endl;
                 return 1;
             }
+            
             data_frame.reset();
 
             // start sending file data
-            char inBuffer[CHACHAPOLY_DATA_BLOCK_SIZE] = { 0 };
+            char inBuffer[MAX_DATA_BLOCK_SIZE] = { 0 };
             int bytes_read = 0;
-            std::ifstream is(absolute_path, std::ifstream::binary);
-
-            int percent = 0;
-            int percent_last = -1;
+            int flush_counter = 0;
             uint32_t frameBudget = framesPerBucket;
             uintmax_t progress = 0;
             auto start_time = std::chrono::high_resolution_clock::now();
-            while(is.good())
+            while(file_io->isGood())
             {
-                is.read(inBuffer, CHACHAPOLY_DATA_BLOCK_SIZE);
-                bytes_read = is.gcount();
+                // read data + prepapre data frame
+                bytes_read = file_io->ReadBytes(inBuffer, DATA_BLOCK_SIZE);
                 data_frame.setOrder(++frameCounter);
                 data_frame.setTransmissionID(info.TransmissionID);
                 data_frame.setData(inBuffer, bytes_read);
@@ -164,22 +276,16 @@ class DefaultProtocolHandler
                 if(ret_val)
                 {
                     std::cerr << "sendFile::Error sending file." << std::endl;
-                    is.close();
                     return 1;
                 }
                 data_frame.reset();
 
-                // print progress
+                // calculate/print progress
                 progress += bytes_read;
-                if(info.stats)
-                {
-                    percent = (( static_cast<double>(progress) / static_cast<double>(fileSize)) * 100.0);
-                    if(percent > percent_last)
-                    {
-                        std::cout << "\rProgress: " << percent << "%";
-                        std::cout.flush();
-                    }
-                    percent_last = percent;
+                if(info.progress) {
+                    std::cout << "\rProgress (Bytes): " << progress;
+                    if(!(flush_counter % 20)) std::cout.flush();
+                    flush_counter++;
                 }
 
                 // throttle bandwidth
@@ -195,16 +301,6 @@ class DefaultProtocolHandler
                     }
                 }
             }
-            is.close();
-
-            if(progress != fileSize)
-            {
-                std::cerr << "sendFile::Error reading/sending entire file." << std::endl;
-                return 1;
-            }
-
-            if(info.stats)
-                std::cout << "\nTransfered Bytes: " << progress << "\n";
 
             // send end-of-transmission frame
             data_frame.reset();
@@ -219,6 +315,11 @@ class DefaultProtocolHandler
             {
                 std::cerr << "sendFile::Error closing file transfer." << std::endl;
                 return 1;
+            }
+
+            if(info.stats || info.progress)  {
+                if(info.progress) std::cout << "\n";
+                std::cout << "Total bytes sent: " << progress << "\n";
             }
 
             return 0;
@@ -273,7 +374,7 @@ class DefaultProtocolHandler
                         if(err)
                         {
                             error = 1;
-                            std::cerr << "ProtocolHandler_ChaCha20::ERROR::Could not send ctrl frame." << std::endl;
+                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Could not send ctrl frame." << std::endl;
                             state = STATE_STOP_CLIENT;
                         }
                         else
@@ -287,7 +388,7 @@ class DefaultProtocolHandler
                         if(ackErr)
                         {
                             error = 1;
-                            std::cerr << "ProtocolHandler_ChaCha20::ERROR::Initial ack error." << std::endl;
+                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Initial ack error." << std::endl;
                             state = STATE_STOP_CLIENT;
                         }
                         else
@@ -303,13 +404,15 @@ class DefaultProtocolHandler
                         }
                         else if(mode == MODE_TEXT)
                         {
-                            err = sendText();
+                            err = sendMessage();
                         }
+
                         if(err)
                         {
                             error = 1;
-                            std::cerr << "ProtocolHandler_ChaCha20::ERROR::Send data returned an error." << std::endl;
+                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::Send data returned an error." << std::endl;
                             state = STATE_STOP_CLIENT;
+                            break;
                         }
                         state = STATE_RCV_FINAL_ACK;                        
                         break;
@@ -321,8 +424,7 @@ class DefaultProtocolHandler
                         if(ackErr)
                         {
                             error = 1;
-                            std::cerr << "ProtocolHandler_ChaCha20::ERROR::Final ack error." << std::endl;
-                            
+                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Final ack error." << std::endl;
                         }
                         state = STATE_STOP_CLIENT;
                     }
@@ -340,19 +442,26 @@ class DefaultProtocolHandler
         }
 
     public:
-        DefaultProtocolHandler(TransferInfo i) {
-
-            info = i;
+        DefaultProtocolHandler(TransferInfo ti) {
+            info = ti;
             clientSocket = info.clientSocket;
             encrypted = info.secVer != SV_PLAIN;
 
-            if(encrypted)
+            if(encrypted) {
                 enc = new Encryption(info.secVer);
+                DATA_BLOCK_SIZE = enc->getDataBlockSize();
+            } else {
+                DATA_BLOCK_SIZE = MAX_DATA_BLOCK_SIZE;
+            }
+                
             state = STATE_GET_TYPE;
             ctrl_loop();
         }
 
-        ~DefaultProtocolHandler() { delete enc; }
+        ~DefaultProtocolHandler() { 
+            if(file_io) delete file_io;
+            if(enc) delete enc;
+        }
 
         int getErrState() { return error; }
 };
@@ -372,11 +481,11 @@ ACK_ERROR_CODE getAckFromSocket(int sock)
     int sock_err = sio::read_from_socket(sock, &ack, ACK_FRAME_SIZE, MSG_WAITALL);
     if(sock_err)
     {
-        std::cerr << "getAckFromSocket::ERROR::Could not read ack from socket." << std::endl;
+        std::cerr << "xcc_protocol_handler.hpp::getAckFromSocket::ERROR::Could not read ack from socket." << std::endl;
         return ACK_GENERAL_ERR;
     } else if(strcmp(ack.ack, "ACK"))
     {
-        std::cerr << "getAckFromSocket::ERROR::malformed ack" << std::endl;
+        std::cerr << "xcc_protocol_handler.hpp::getAckFromSocket::ERROR::malformed ack" << std::endl;
         return ACK_GENERAL_ERR;
     }
     return ack.error;
@@ -411,11 +520,10 @@ int sendCtrlFramePlain(TransferInfo info, PROTOCOL_VERSION ver)
     }
 
     // send CTRL FRAME
-    // TODO: serialize control_frame into a send buffer before calling write_to_socket()
     return sio::write_to_socket(info.clientSocket, control_frame.getCtrlFrame(), CTRL_FRAME_SIZE);
 }
 
-// generate ctrl_frame for chacha20 encryption, appends iv to ctrl_frame
+// generate ctrl_frame for encryption, appends iv to ctrl_frame
 int sendCtrlFrameEncryption(TransferInfo info, PROTOCOL_VERSION ver, CryptoPP::byte *iv, int iv_size)
 {
     ControlFrame control_frame;

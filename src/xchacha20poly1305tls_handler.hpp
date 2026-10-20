@@ -1,9 +1,6 @@
 #ifndef XCHACHA20POLY1305TLS_HPP
 #define XCHACHA20POLY1305TLS_HPP
 
-#include <string.h>
-#include <fstream>
-
 #include <crypto++/chachapoly.h>
 #include <crypto++/osrng.h>
 #include <crypto++/hkdf.h>

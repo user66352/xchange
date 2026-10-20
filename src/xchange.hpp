@@ -21,7 +21,7 @@
 #include <poll.h>
 #include <unistd.h>
 
-std::string program_version_str = "0.1.6";
+std::string program_version_str = "0.1.7";
 
 /* memory size macros */
 #define  B(x)  (x)
@@ -88,7 +88,9 @@ enum SECURITY_VERSION : uint8_t
 
 // lookup table to resolve protocol_version into security_version
 // might need to be consolidated later into one
+std::map<std::string, SECURITY_VERSION> selectionToSecVersionMap = { {"pln", SV_PLAIN}, {"cha", SV_CHACHA20}, {"xch", SV_XCHACHA20POLY}, {"aes", SV_AES_GCM} };
 std::map<PROTOCOL_VERSION, SECURITY_VERSION> secVersionLookupMap = { {PV_00_01, SV_PLAIN}, {PV_CHACHA20, SV_CHACHA20}, {PV_XCHACHA20POLY, SV_XCHACHA20POLY}, {PV_AES_GCM, SV_AES_GCM} };
+std::map<SECURITY_VERSION, PROTOCOL_VERSION> proVersionLookupMap = { {SV_PLAIN, PV_00_01}, {SV_CHACHA20, PV_CHACHA20}, {SV_XCHACHA20POLY, PV_XCHACHA20POLY}, {SV_AES_GCM, PV_AES_GCM} };
 
 //-------------------------------------------------
 //------------ FRAME DEFINITIONS BEGIN ------------
@@ -136,6 +138,7 @@ struct XCD_GLOBAL_INFO
 } global_info;
 
 PROTOCOL_VERSION PV_DEFAULT = PV_00_01;         // default protocol version to use in case version was not specified by user (default is plain text)
+SECURITY_VERSION SV_DEFAULT = SV_PLAIN;
 
 const int EOT = -2;                 // END-OF-TRANSMISSION
 
@@ -467,7 +470,6 @@ namespace sio
             ret_val = write(sock, &buffer[bytes_sent], bytes_to_send);
             if(ret_val < 0)
             {
-                std::cerr << "write_to_socket error" << std::endl;
                 int err = errno;
                 const char *errName = strerrorname_np(err);
                 const char *errDesc = strerrordesc_np(err);
@@ -484,7 +486,6 @@ namespace sio
 
                 if(err == EAGAIN || err == EWOULDBLOCK || err == EINTR)
                 {
-                    std::cerr << "write_to_socket error" << std::endl;
                     tool::pauseThread();
                     retry_count_err++;
 

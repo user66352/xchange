@@ -4,8 +4,6 @@
 #include <vector>
 
 #include "xchange.hpp"
-// #include "chacha20_handler.hpp"
-// #include "xchacha20poly1305tls_handler.hpp"
 #include "crypto_handler.hpp"
 
 
@@ -41,7 +39,6 @@ struct Parameter
     std::string msgOutFile = "";
     std::string logFile = "";
     std::string chacha20KeyFile = "";
-    std::string xChacha20KeyFile = "";      // TODO: needs to be implemented, right now xchacha uses the chacha key
     SECURITY_VERSION sv = SV_NONE;
     uint32_t ip = INADDR_ANY;
     uint16_t port = DEFAULT_PORT;
@@ -86,6 +83,10 @@ class DefaultProtocolHandler
             }
 
             state = STATE_GET_TYPE;
+
+            #ifdef DEBUG
+            if(dec) PrintDecryptionMethod();
+            #endif
         }
 
         int sendAck(ACK_ERROR_CODE err)
@@ -121,14 +122,12 @@ class DefaultProtocolHandler
             // test for correct transfer id
             if(data_header.transmission_id != ctrl_frame.transmission_id) {
                 *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::VerifyDataFrame::Error::Transmission ID missmatch." << std::endl;
-
                 return 1;
             }
 
             // test for correct frame order
             if(data_header.order_nbr != frame_order_nbr) {
                 *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::VerifyDataFrame::Error::Frame out of order." << std::endl;
-
                 return 1;
             }
 
@@ -142,7 +141,6 @@ class DefaultProtocolHandler
             chksum_t ChkSum = tool::fletcher16(&pln_buffer[DATA_FRAME_HEADER_SIZE], data_header.data_size);
             if(ChkSum != data_header.chksum) {
                 *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::VerifyDataFrame::Error::Checksum missmatch." << std::endl;
-
                 return 1;
             }
 
@@ -155,7 +153,6 @@ class DefaultProtocolHandler
         // returns EOT when received an EOT data frame (-2)
         // data in pln_buffer starts at [DATA_FRAME_HEADER_SIZE]
         int ReadDataFrame() {
-
             DATA_FRAME_HEADER data_header;
 
             if(encrypted) {
@@ -204,6 +201,12 @@ class DefaultProtocolHandler
             }
 
             frame_order_nbr++;
+
+            // close connection at 32bit rollover
+            if(frame_order_nbr == 0) {
+                *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::ReadDataFrame::Warning::Maximum frame count reached for transmission." << std::endl;
+                return -1;
+            }
 
             // test for EOT frame
             int return_value = data_header.data_size;

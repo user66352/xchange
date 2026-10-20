@@ -22,6 +22,8 @@ struct TransferInfo
     uint64_t bandwidth = 0;
     byte TransmissionID = 0x00;
     bool stats = false;
+    bool progress = false;
+    bool read_stdin = false;
 };
 
 
