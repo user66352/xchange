@@ -59,12 +59,16 @@ Xchange is developed based on libcrypto++ version 8.9.0.
 
 - forward incoming files to a folder, messages printed to stdout/the terminal  
 
-```xcd -o /path/to/received/files```  
+```bash
+xcd -o /path/to/received/files
+```  
 
 - when used as a daemon you may want to specify all options  
 - dedicated port (default is 9009), listening to a dedicated local ip (defaults to 0.0.0.0), files stored in a folder, messages stored in a specific message file and errors being logged to a log file:  
 
-```xcd -i 192.168.55.10 -p 10111 -k keyfile.bin -o /home/user/receivedFilesDir -m /home/user/receivedMessages.txt -e /home/user/xcdlog.txt```  
+```bash
+xcd -i 192.168.55.10 -p 10111 -k keyfile.bin -o /home/user/receivedFilesDir -m /home/user/receivedMessages.txt -e /home/user/xcdlog.txt
+```  
 
 - xcd can be stopped by sending SIGINT or CTRL+C on the terminal  
 - though thats not a 'graceful' shutdown yet, it will terminate an ongoing transfer  
@@ -74,40 +78,56 @@ Xchange is developed based on libcrypto++ version 8.9.0.
 
 - forward a message with default settings (no encryption):  
 
-```xcc -s 192.168.55.10 -m "very important message"```  
+```bash
+xcc -s 192.168.55.10 -m "very important message"
+```  
 
 
 - forward a file to a server with a non-default port:  
 
-```xcc -s 192.168.55.10 -p 10111 -f /file/to/forward/file.bin```  
+```bash
+xcc -s 192.168.55.10 -p 10111 -f /file/to/forward/file.bin
+```  
 
 
 - send a file with limited bandwidth (in byte per sec) and status information:  
 
-```xcc -s 192.168.55.10 -p 10111 -b 256000 -S -f /file/to/forward/file.bin```  
+```bash
+xcc -s 192.168.55.10 -p 10111 -b 256000 -S -f /file/to/forward/file.bin
+```  
 
 
 - send a message encrypted with ChaCha20Poly1305:  
 
-```xcc -s 192.168.55.10 -k keyfile.key -e cha -m 'my message'```  
+```bash
+xcc -s 192.168.55.10 -k keyfile.key -e cha -m 'my message'
+```  
 
 
 - send a file encrypted with ChaCha20Poly1305:  
 
-```xcc -s 192.168.55.10 --key keyfile.key --encryption cha --file /file/to/forward/file.bin```  
+```bash
+xcc -s 192.168.55.10 --key keyfile.key --encryption cha --file /file/to/forward/file.bin
+```  
 
 - send a file encrypted with XChaCha20Poly1305:  
 
-```xcc -s 192.168.55.10 -k keyfile.bin -e xch -f /file/to/forward/file.bin```  
+```bash
+xcc -s 192.168.55.10 -k keyfile.bin -e xch -f /file/to/forward/file.bin
+```  
 
 
 - send a file AES encrypted received via a pipe and print stats after transfer:  
 
-```cat ~/results.csv | xcc -s 192.168.55.10 --stats --key keyfile.bin --encryption aes --stdin file --name results.csv```  
+```bash
+cat ~/results.csv | xcc -s 192.168.55.10 --stats --key keyfile.bin --encryption aes --stdin file --name results.csv
+```  
 
 - send a message received from a pipe:
 
-```echo "highly important message" | xcc -s 192.168.55.10 --key keyfile.bin --encryption xch --stdin message```  
+```bash
+echo "highly important message" | xcc -s 192.168.55.10 --key keyfile.bin --encryption xch --stdin message
+```  
 
 
 ## Install  
