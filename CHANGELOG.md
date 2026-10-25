@@ -1,5 +1,15 @@
 # Change Log  
 
+## Ver. 0.1.8  
+
+### Added
+  
+- xchange daemon (xcd) got the new option --whitelist  
+	- it allows to define allowed encryption methods  
+	- with `--whitelist cha,xch,aes` any plain text/unencrypted connections are refused   
+	- so only clients with the correct pre-shared key are able to connect and upload  
+  
+  
 ## Ver. 0.1.7  
 
 ### Added  

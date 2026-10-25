@@ -27,6 +27,7 @@ struct CliArgs
     std::string bandwidth = "";
     std::string encryptionMode = "";
     std::string keyFile = "";
+    std::string whitelist = "";
     bool progress = false;
     bool stats = false;
     bool help = false;
@@ -132,6 +133,14 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
             continue;
         }
 
+        // read from stdin instead of file, triggers data being send in file mode
+        if ( tmp_str == "--whitelist" )
+        {
+            i++;
+            args.whitelist = argv[i];
+            continue;
+        }
+
         // print help
         if( tmp_str == "-h" || tmp_str == "--help")
         {
@@ -212,6 +221,11 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
             return 1;
         }
     }
+
+    #ifdef DEBUG
+    std::cout << "whitelist: " << args.whitelist << std::endl;
+    #endif
+
     return 0;
 }
 
@@ -349,7 +363,6 @@ int main(int argc, char* argv[])
 
     // creating socket
     int clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    // int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
     transfer_info.clientSocket = clientSocket;
 
     // sending connection request
@@ -372,6 +385,7 @@ int main(int argc, char* argv[])
     }
 
     // select and start ProtocolHandler
+    transfer_info.TransmissionID = 0x01;               // TODO: random number
     connErr = selectProtocolHandler(transfer_info);
     if(connErr) {
         std::cerr << "An error occurred during transfer!" << std::endl;

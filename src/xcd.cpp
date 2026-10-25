@@ -69,11 +69,21 @@ void printVersion()
     std::cout << "version: " << program_version_str << std::endl;
 }
 
-void parseArgs(int argc, char* argv[], Parameter &params)
+bool isArgValid(int argc, int i) { 
+    return !(i >= argc);
+}
+
+int parseArgs(int argc, char* argv[], Parameter &params)
 {
+    if(argc == 1) {
+        *global_info.stderrStream << "Missing arguments." << std::endl;
+        return 1;
+    }
+
+    std::string tmp_str = "";
     for(int i = 1; i < argc; i++)
     {
-        std::string tmp_str = argv[i];
+        tmp_str = argv[i];
 
         if( tmp_str == "-i" )
         {
@@ -112,10 +122,19 @@ void parseArgs(int argc, char* argv[], Parameter &params)
             continue;
         }
 
-        if( tmp_str == "-k" )
+        if( tmp_str == "--whitelist" )
         {
             i++;
-            params.chacha20KeyFile = argv[i];
+            params.encryptionWhiteList = argv[i];
+            continue;
+        }
+
+        if( tmp_str == "-k" || tmp_str == "--key")
+        {
+            i++;
+            if(isArgValid(argc, i))
+                params.chacha20KeyFile = argv[i];
+            else goto argMissing;
             continue;
         }
 
@@ -132,9 +151,15 @@ void parseArgs(int argc, char* argv[], Parameter &params)
         }
 
         *global_info.stderrStream << "Unknown argument: " << tmp_str << std::endl;
-        cleanUp();
-        exit(1);
+        return 1;
     }
+
+    return 0;
+
+    argMissing:
+
+    *global_info.stderrStream << "Missing option at: " << tmp_str << std::endl;
+    return 1;
 }
 
 // check if arguments are coherent/allowed
@@ -216,9 +241,13 @@ int main(int argc, char* argv[])
     // setup CTRL+C handling
     signal(SIGINT, sigint_handler);
 
-    if(argc > 1)
-        parseArgs(argc, argv, params);
-
+    int argError = parseArgs(argc, argv, params);
+    if(argError) {
+        std::cerr << "Exit due to argument error." << std::endl;
+        cleanUp();
+        return 1;
+    }
+    
     // help
     if(params.help)
     {
@@ -235,6 +264,9 @@ int main(int argc, char* argv[])
 
     int args_err = checkArgsPlausibility(params);
     if(args_err) return 1;
+
+    // fill whitelist
+    if(!params.encryptionWhiteList.empty()) params.allowedEncryptionVec = tool::splitEncryptionWhitelist(params.encryptionWhiteList);
 
     // defining streams
     std::ofstream out_stream;

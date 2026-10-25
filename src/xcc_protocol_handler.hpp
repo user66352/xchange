@@ -24,8 +24,8 @@ struct FileInfo
 
 ACK_ERROR_CODE getAckFromSocket(int sock);
 int sendDataBuffer(int sock, void* buffer, int length);
-int sendCtrlFramePlain(TransferInfo info, PROTOCOL_VERSION ver);
-int sendCtrlFrameEncryption(TransferInfo info, PROTOCOL_VERSION ver, CryptoPP::byte *iv, int iv_size);
+int sendCtrlFramePlain(TransferInfo info);
+int sendCtrlFrameEncryption(TransferInfo info, CryptoPP::byte *iv, int iv_size);
 
 // manage read from stdin and file
 class FileIO
@@ -368,9 +368,9 @@ class DefaultProtocolHandler
                     case STATE_SEND_INIT_CTRL_FRAME:
                     {
                         if(encrypted)
-                            err = sendCtrlFrameEncryption(info, info.pv, enc->getIV(), enc->getIVSize());
+                            err = sendCtrlFrameEncryption(info, enc->getIV(), enc->getIVSize());
                         else
-                            err = sendCtrlFramePlain(info, info.pv);
+                            err = sendCtrlFramePlain(info);
                         if(err)
                         {
                             error = 1;
@@ -491,68 +491,31 @@ ACK_ERROR_CODE getAckFromSocket(int sock)
     return ack.error;
 }
 
-int sendCtrlFramePlain(TransferInfo info, PROTOCOL_VERSION ver)
+int sendCtrlFramePlain(TransferInfo info)
 {
     ControlFrame control_frame;
 
-    // create CTRL Frame
-    switch (info.mode)
-    {
-        case MODE_FILE:
-        {
-            control_frame.setProtocolVer(ver);
-            control_frame.setFlag(FLAG_NEW_TRANSMISSION);
-            control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
-            control_frame.setTransmissionID(info.TransmissionID);
-            break;
-        }
-
-        case MODE_TEXT:
-        {
-            control_frame.setProtocolVer(ver);
-            control_frame.setFlag(FLAG_NEW_TRANSMISSION);
-            control_frame.setTransmissionID(info.TransmissionID);
-            break;
-        }
-
-        default:
-            break;
-    }
+    control_frame.setProtocolVer(info.pv);
+    control_frame.setSecurityVer(info.secVer);
+    control_frame.setFlag(FLAG_NEW_TRANSMISSION);
+    control_frame.setTransmissionID(info.TransmissionID);
+    if(info.mode == MODE_FILE) control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
 
     // send CTRL FRAME
     return sio::write_to_socket(info.clientSocket, control_frame.getCtrlFrame(), CTRL_FRAME_SIZE);
 }
 
 // generate ctrl_frame for encryption, appends iv to ctrl_frame
-int sendCtrlFrameEncryption(TransferInfo info, PROTOCOL_VERSION ver, CryptoPP::byte *iv, int iv_size)
+int sendCtrlFrameEncryption(TransferInfo info, CryptoPP::byte *iv, int iv_size)
 {
     ControlFrame control_frame;
 
-    // create CTRL Frame
-    switch (info.mode)
-    {
-        case MODE_FILE:
-        {
-            control_frame.setProtocolVer(ver);
-            control_frame.setFlag(FLAG_NEW_TRANSMISSION);
-            control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
-            control_frame.setFlag(FLAG_ENCRYPTED);
-            control_frame.setTransmissionID(info.TransmissionID);
-            break;
-        }
-
-        case MODE_TEXT:
-        {
-            control_frame.setProtocolVer(ver);
-            control_frame.setFlag(FLAG_NEW_TRANSMISSION);
-            control_frame.setFlag(FLAG_ENCRYPTED);
-            control_frame.setTransmissionID(info.TransmissionID);
-            break;
-        }
-
-        default:
-            break;
-    }
+    control_frame.setProtocolVer(info.pv);
+    control_frame.setSecurityVer(info.secVer);
+    control_frame.setFlag(FLAG_NEW_TRANSMISSION);
+    control_frame.setFlag(FLAG_ENCRYPTED);
+    control_frame.setTransmissionID(info.TransmissionID);
+    if(info.mode == MODE_FILE) control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
 
     char sendBuffer[CTRL_FRAME_SIZE + MAX_IV_SIZE];
     // ctrl_frame to send buffer

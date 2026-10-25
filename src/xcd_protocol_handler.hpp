@@ -39,7 +39,9 @@ struct Parameter
     std::string msgOutFile = "";
     std::string logFile = "";
     std::string chacha20KeyFile = "";
+    std::string encryptionWhiteList = "";
     SECURITY_VERSION sv = SV_NONE;
+    std::vector<SECURITY_VERSION> allowedEncryptionVec;
     uint32_t ip = INADDR_ANY;
     uint16_t port = DEFAULT_PORT;
     bool help = false;

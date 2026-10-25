@@ -21,7 +21,7 @@
 #include <poll.h>
 #include <unistd.h>
 
-std::string program_version_str = "0.1.7";
+std::string program_version_str = "0.1.8";
 
 /* memory size macros */
 #define  B(x)  (x)
@@ -196,6 +196,26 @@ namespace tool
         is.close();
 
         return return_val;
+    }
+
+    // splits whitelist str and returns a vector with allowed sec versions
+    std::vector<SECURITY_VERSION> splitEncryptionWhitelist(std::string wlStr)
+    {
+        std::string                   token;
+        std::stringstream             ss(wlStr);
+        std::vector<std::string>      tmpVec;
+        std::vector<SECURITY_VERSION> returnVec;
+
+        while(std::getline(ss, token, ',')) {
+            tmpVec.emplace_back(token);
+        }
+
+        for(std::string &s : tmpVec) {
+            if(selectionToSecVersionMap.contains(s))
+                returnVec.emplace_back(selectionToSecVersionMap[s]);
+        }
+
+        return returnVec;
     }
 
     // takes a pointer to a buffer, returns a hex string of buffer values

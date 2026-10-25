@@ -46,6 +46,8 @@ class ControlFrame
 
         void setProtocolVer(PROTOCOL_VERSION pv) { frame_intern.pv = pv; }
 
+        void setSecurityVer(SECURITY_VERSION sv) { frame_intern.sv = sv; }
+
         CTRL_FRAME *getCtrlFrame()
         {
             memcpy(&frame_extern, &frame_intern, CTRL_FRAME_SIZE);
