@@ -33,7 +33,7 @@ For example such a key file can be created with dd:
   
 If no encryption method was specified xcc will default to plain text transfer.  
 To prevent unencrypted traffic and/or unauthorized clients from uploading xcd has the option --whitelist.  
-Start xcd with `--whitelist aes,cha,xch` to deny unauthorized clients.  
+Start xcd with `--whitelist aes,cha,xch` to deny unauthorized clients or to limit connections to a specific encryption.  
   
 Each transmitted data frame comes with its own checksum and frame counter to guarantee data integrity and in-order frame transfer.  
 That`s already done by TCP but better safe than sorry.  
