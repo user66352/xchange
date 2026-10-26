@@ -41,7 +41,7 @@ struct Parameter
     std::string chacha20KeyFile = "";
     std::string encryptionWhiteList = "";
     SECURITY_VERSION sv = SV_NONE;
-    std::vector<SECURITY_VERSION> allowedEncryptionVec;
+    std::vector<SECURITY_VERSION> allowedEncryptionVec = SECURITY_VERSION_VEC;
     uint32_t ip = INADDR_ANY;
     uint16_t port = DEFAULT_PORT;
     bool help = false;

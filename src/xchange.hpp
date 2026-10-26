@@ -21,7 +21,7 @@
 #include <poll.h>
 #include <unistd.h>
 
-std::string program_version_str = "0.1.8";
+std::string program_version_str = "0.1.9";
 
 /* memory size macros */
 #define  B(x)  (x)
@@ -75,7 +75,7 @@ std::vector<PROTOCOL_VERSION> PROTOCOL_VERSION_VEC =
     PV_LAST
 };
 
-// placeholder for later protocol versions supporting auth and encryption
+// encodes the encryption method used for the protocol in CTRL_FRAME
 enum SECURITY_VERSION : uint8_t
 {
     SV_NONE,
@@ -84,6 +84,14 @@ enum SECURITY_VERSION : uint8_t
     SV_XCHACHA20POLY,
     SV_AES_GCM,
     SV_LAST
+};
+
+std::vector<SECURITY_VERSION> SECURITY_VERSION_VEC =
+{
+    SV_PLAIN,
+    SV_CHACHA20,
+    SV_XCHACHA20POLY,
+    SV_AES_GCM,
 };
 
 // lookup table to resolve protocol_version into security_version

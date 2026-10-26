@@ -1,5 +1,11 @@
 # Change Log  
+  
+## Ver. 0.1.9  
 
+### Fixed  
+
+- a bug that required --whitelist settings, if --whitelist is not set on xcd all encryption modes are now available  
+  
 ## Ver. 0.1.8  
 
 ### Added
