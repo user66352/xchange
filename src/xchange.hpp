@@ -21,7 +21,7 @@
 #include <poll.h>
 #include <unistd.h>
 
-std::string program_version_str = "0.1.9";
+std::string program_version_str = "0.1.10";
 
 /* memory size macros */
 #define  B(x)  (x)
