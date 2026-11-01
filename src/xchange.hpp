@@ -1,7 +1,7 @@
 // xchange is developed based on libcrypto++ version 8.9.0
 
-#ifndef DEFINITIONS_HPP
-#define DEFINITIONS_HPP
+#ifndef XCHANGE_HPP
+#define XCHANGE_HPP
 
 #include <map>
 #include <ctime>
@@ -171,6 +171,7 @@ const int MAX_DATA_FRAME_SIZE = MSS;                                            
 const int MAX_DATA_BLOCK_SIZE = MAX_DATA_FRAME_SIZE - DATA_FRAME_HEADER_SIZE;   // fit data frame to non-jumbo tcp frame , max user data bytes per frame
 
 const int MAX_FILENAME_LENGTH = 128;
+const int MAX_CONNECTED_CLIENTS = 10;
 
 //----------------------------------------
 //------------ TIMING OPTIONS ------------

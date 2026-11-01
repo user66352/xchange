@@ -1,8 +1,7 @@
 #ifndef XCC_PROTOCOL_HANDLER_HPP
 #define XCC_PROTOCOL_HANDLER_HPP
 
-#include "xcc.hpp"
-#include "crypto_handler.hpp"
+#include "socketIO_handler.hpp"
 
 enum ProgramState
 {
@@ -22,12 +21,7 @@ struct FileInfo
     bool stdi = false;
 };
 
-ACK_ERROR_CODE getAckFromSocket(int sock);
-int sendDataBuffer(int sock, void* buffer, int length);
-int sendCtrlFramePlain(TransferInfo info);
-int sendCtrlFrameEncryption(TransferInfo info, CryptoPP::byte *iv, int iv_size);
-
-// manage read from stdin and file
+// manage read from stdin or file
 class FileIO
 {
     private:
@@ -102,28 +96,16 @@ class DefaultProtocolHandler
         TransferMode mode = MODE_NONE;
         ProgramState state = STATE_NONE;
         FileIO *file_io = nullptr;
-        Encryption *enc = nullptr;
+        // Encryption *enc = nullptr;
+        SocketIO_Manager *socketIO = nullptr;
         int DATA_BLOCK_SIZE = 0;
         bool encrypted = false;
-        char snd_buffer[MAX_DATA_FRAME_SIZE];
+        // char snd_buffer[MAX_DATA_FRAME_SIZE];
         uint32_t frameCounter = 0;
         int clientSocket = 0;
         int error = 0;
 
-        // encrypts a data_frame if required and sends it
-        int SendDataFrame(DataFrame &df) {
-            int send_err = 0;
-            if(encrypted) {
-                // encrypt data and send
-                int transmit_size = enc->encrypt(df.getTransmitBuffer(), snd_buffer, df.frameSize());
-                send_err = sendDataBuffer(clientSocket, snd_buffer, transmit_size);
-            } else {
-                // send as plain text
-                send_err = sendDataBuffer(clientSocket, df.getTransmitBuffer(), df.frameSize());
-            }
-            return send_err;
-        }
-
+        // read message from stdin
         std::string ReadMessage() {
 
             std::string msg = "";
@@ -188,7 +170,7 @@ class DefaultProtocolHandler
             char *data_buffer = const_cast<char *>(message.c_str());
             data_frame.setData(data_buffer, data_size);
 
-            int send_err = SendDataFrame(data_frame);
+            int send_err = socketIO->SendDataFrame(data_frame);
             if(send_err) return 1;
 
             data_frame.reset();
@@ -201,7 +183,7 @@ class DefaultProtocolHandler
             data_frame.setData(nullptr, 0);
 
             // encrypt data and send EOT frame
-            send_err = SendDataFrame(data_frame);
+            send_err = socketIO->SendDataFrame(data_frame);
 
             if(send_err) return 1;
 
@@ -247,7 +229,7 @@ class DefaultProtocolHandler
             data_frame.setOrder(frameCounter);
             data_frame.setData(const_cast<char *>(filename.c_str()), filename.size());
 
-            int ret_val = SendDataFrame(data_frame);
+            int ret_val = socketIO->SendDataFrame(data_frame);
             if(ret_val == -1)
             {
                 std::cerr << "xcc_protocol_handler.xcc::DefaultProtocolHandler::sendFile::Error sending filename." << std::endl;
@@ -272,7 +254,7 @@ class DefaultProtocolHandler
                 data_frame.setData(inBuffer, bytes_read);
 
                 // send data frame
-                ret_val = SendDataFrame(data_frame);
+                ret_val = socketIO->SendDataFrame(data_frame);
                 if(ret_val)
                 {
                     std::cerr << "sendFile::Error sending file." << std::endl;
@@ -310,7 +292,7 @@ class DefaultProtocolHandler
             data_frame.setData(nullptr, 0);
 
             // send final EOT frame
-            ret_val = SendDataFrame(data_frame);
+            ret_val = socketIO->SendDataFrame(data_frame);
             if(ret_val)
             {
                 std::cerr << "sendFile::Error closing file transfer." << std::endl;
@@ -353,7 +335,7 @@ class DefaultProtocolHandler
 
                     case STATE_SET_CHACHA20_KEY:
                     {
-                        err = enc->readKey(info.keyFile);
+                        err = socketIO->EncReadKeyFromFile(info.keyFile);
                         if(err)
                         {
                             error = 1;
@@ -368,9 +350,9 @@ class DefaultProtocolHandler
                     case STATE_SEND_INIT_CTRL_FRAME:
                     {
                         if(encrypted)
-                            err = sendCtrlFrameEncryption(info, enc->getIV(), enc->getIVSize());
+                            err = socketIO->SendCtrlFrameEncrypted(info);
                         else
-                            err = sendCtrlFramePlain(info);
+                            err = socketIO->SendCtrlFramePlain(info);
                         if(err)
                         {
                             error = 1;
@@ -384,7 +366,7 @@ class DefaultProtocolHandler
 
                     case STATE_RCV_INIT_ACK:
                     {
-                        ACK_ERROR_CODE ackErr = getAckFromSocket(clientSocket);
+                        ACK_ERROR_CODE ackErr = socketIO->GetAckFromSocket();
                         if(ackErr)
                         {
                             error = 1;
@@ -420,7 +402,7 @@ class DefaultProtocolHandler
 
                     case STATE_RCV_FINAL_ACK:
                     {
-                        ACK_ERROR_CODE ackErr = getAckFromSocket(clientSocket);
+                        ACK_ERROR_CODE ackErr = socketIO->GetAckFromSocket();
                         if(ackErr)
                         {
                             error = 1;
@@ -445,97 +427,21 @@ class DefaultProtocolHandler
         DefaultProtocolHandler(TransferInfo ti) {
             info = ti;
             clientSocket = info.clientSocket;
-            encrypted = info.secVer != SV_PLAIN;
 
-            if(encrypted) {
-                enc = new Encryption(info.secVer);
-                DATA_BLOCK_SIZE = enc->getDataBlockSize();
-            } else {
-                DATA_BLOCK_SIZE = MAX_DATA_BLOCK_SIZE;
-            }
+            socketIO = new SocketIO_Manager(clientSocket, info.secVer);
+            DATA_BLOCK_SIZE = socketIO->GetDataBlockSize();
+            encrypted = socketIO->isEncrypted();
                 
             state = STATE_GET_TYPE;
             ctrl_loop();
         }
 
-        ~DefaultProtocolHandler() { 
+        ~DefaultProtocolHandler() {
+            delete socketIO;
             if(file_io) delete file_io;
-            if(enc) delete enc;
         }
 
         int getErrState() { return error; }
 };
-
-
-/*
- ----------------------------
- ----- Shared Functions -----
- ----------------------------
-*/
-
-// read ack from socket
-// return ack_status (ACK_OK on success)
-ACK_ERROR_CODE getAckFromSocket(int sock)
-{
-    ACK_FRAME ack;
-    int sock_err = sio::read_from_socket(sock, &ack, ACK_FRAME_SIZE, MSG_WAITALL);
-    if(sock_err)
-    {
-        std::cerr << "xcc_protocol_handler.hpp::getAckFromSocket::ERROR::Could not read ack from socket." << std::endl;
-        return ACK_GENERAL_ERR;
-    } else if(strcmp(ack.ack, "ACK"))
-    {
-        std::cerr << "xcc_protocol_handler.hpp::getAckFromSocket::ERROR::malformed ack" << std::endl;
-        return ACK_GENERAL_ERR;
-    }
-    return ack.error;
-}
-
-int sendCtrlFramePlain(TransferInfo info)
-{
-    ControlFrame control_frame;
-
-    control_frame.setProtocolVer(info.pv);
-    control_frame.setSecurityVer(info.secVer);
-    control_frame.setFlag(FLAG_NEW_TRANSMISSION);
-    control_frame.setTransmissionID(info.TransmissionID);
-    if(info.mode == MODE_FILE) control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
-
-    // send CTRL FRAME
-    return sio::write_to_socket(info.clientSocket, control_frame.getCtrlFrame(), CTRL_FRAME_SIZE);
-}
-
-// generate ctrl_frame for encryption, appends iv to ctrl_frame
-int sendCtrlFrameEncryption(TransferInfo info, CryptoPP::byte *iv, int iv_size)
-{
-    ControlFrame control_frame;
-
-    control_frame.setProtocolVer(info.pv);
-    control_frame.setSecurityVer(info.secVer);
-    control_frame.setFlag(FLAG_NEW_TRANSMISSION);
-    control_frame.setFlag(FLAG_ENCRYPTED);
-    control_frame.setTransmissionID(info.TransmissionID);
-    if(info.mode == MODE_FILE) control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
-
-    char sendBuffer[CTRL_FRAME_SIZE + MAX_IV_SIZE];
-    // ctrl_frame to send buffer
-    memcpy(sendBuffer, control_frame.getCtrlFrame(), CTRL_FRAME_SIZE);
-    // add iv to send buffer
-    memcpy(&sendBuffer[CTRL_FRAME_SIZE], iv, iv_size);
-
-    // send CTRL FRAME
-    return sio::write_to_socket(info.clientSocket, sendBuffer, CTRL_FRAME_SIZE + iv_size);
-}
-
-// return 0 on success, -1 on failure
-int sendDataBuffer(int sock, void* buffer, int length)
-{
-    if(length > MAX_DATA_FRAME_SIZE)
-    {
-        std::cerr << "xcc_protocol_handler.hpp::sendDataBuffer::ERROR::max data frame size exceeded" << std::endl;
-        return -1;
-    }
-    return sio::write_to_socket(sock, buffer, length);
-}
 
 #endif

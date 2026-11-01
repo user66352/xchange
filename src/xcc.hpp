@@ -2,6 +2,7 @@
 #define XCC_HPP
 
 #include "xchange.hpp"
+#include "socketIO_handler.hpp"
 
 enum TransferMode
 {

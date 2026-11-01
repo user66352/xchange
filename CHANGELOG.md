@@ -1,4 +1,12 @@
 # Change Log  
+
+## Ver. 0.1.10  
+
+### Added  
+
+- multithreading for xcd, now up to 10 clients can connect to the server and upload in parallel  
+	- more clients would be possible but that would be beyond the expected scope of this project  
+	- that can be increased with MAX_CONNECTED_CLIENTS in xchange.hpp  
   
 ## Ver. 0.1.9  
 

@@ -3,18 +3,27 @@
 // - quota for receive folder
 // - setting for max file length
 
+#include <list>
+#include <mutex>
 #include <csignal>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <filesystem>
+#include <fcntl.h>
+#include <unistd.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
-#include <unistd.h>
+
 
 #include "xcd.hpp"
 #include "help.hpp"
 
+#define seconds(x) std::chrono::seconds(x)
+
+typedef std::list<ConnectionManager *> ConnManagerList_t;
+
+void cleanUp();
 
 void sigint_handler(int s)
 {
@@ -176,11 +185,40 @@ int checkArgsPlausibility(Parameter &params)
     return err_state;
 }
 
+// started as a separat thread to continuously clear out finished connection threads
+void CleanUpConnManagerList(ConnManagerList_t *ConnManagerList, std::mutex *lockMutex) {
+    
+    for(;;) {
+
+        {   // scope required to give the std::lock_guard a limited lifetime
+            std::lock_guard<std::mutex> lock(*lockMutex);
+        
+            for(auto &cm: *ConnManagerList) {
+                if(cm->isDone()) {
+                    int clientSocket = cm->GetClientSocket();
+                    if(fcntl(clientSocket, F_GETFD) != -1) {
+                        close(clientSocket);
+                    }
+                    delete cm;
+                    cm = nullptr;
+                }
+            }
+            ConnManagerList->remove(nullptr);
+        }
+
+        std::this_thread::sleep_for(seconds(10));   // TODO: create const int for list cleanup time in xchange.hpp
+    }
+}
+
 int mainLoop(int serverSocket, Parameter params)
 {
     int clientSocket;
     bool serve = true;
+    std::mutex ListLock;
+    ConnManagerList_t ConnectionManagerList;
     ProgramState state = STATE_WAIT_FOR_CONNECTION;
+
+    std::jthread ListCleanUpWorker(CleanUpConnManagerList, &ConnectionManagerList, &ListLock);
 
     while(serve)
     {
@@ -189,7 +227,6 @@ int mainLoop(int serverSocket, Parameter params)
             case STATE_WAIT_FOR_CONNECTION:
             {
                 clientSocket = 0;
-
                 clientSocket = accept(serverSocket, nullptr, nullptr);
 
                 if(clientSocket > 0)
@@ -203,13 +240,20 @@ int mainLoop(int serverSocket, Parameter params)
 
             case STATE_START_CONN_MANAGER:
             {
-                ConnectionManager conn_manager(clientSocket, params);
-                close(clientSocket);
+                #ifdef DEBUG
+                std::cout << "DEBUG::xcd.cpp::mainLoop::clientSocket: " << (int) clientSocket << std::endl;
+                #endif
+
+                // add a new connection manager thread
+                std::lock_guard<std::mutex> lock(ListLock);
+                ConnectionManagerList.push_back(new ConnectionManager(clientSocket, params));
+
                 state = STATE_WAIT_FOR_CONNECTION;
                 break;
             }
 
             case STATE_STOP_SERVER:
+                // TODO: for gracefull shutdown wait here until ConnectionManagerList.size() == 0
                 serve = false;
                 break;
 
@@ -307,14 +351,18 @@ int main(int argc, char* argv[])
         return(1);
     }
 
-    // listening to the assigned socket, up to 0 additional connections/clients for now
-    err = listen(serverSocket, 1);
+    // listening to the assigned socket, max 10 parallel connections/clients
+    err = listen(serverSocket, MAX_CONNECTED_CLIENTS);
     if(err)
     {
         *global_info.stderrStream << "main::Error setting up server socket to listen at port: " << static_cast<int>(params.port) << std::endl;
         cleanUp();
         return(1);
     }
+
+    #ifdef DEBUG
+    std::cout << "DEBUG::xcd.cpp::main::serverSocket: " << (int) serverSocket << std::endl;
+    #endif
 
     int error = mainLoop(serverSocket, params);
 

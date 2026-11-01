@@ -10,6 +10,7 @@ compiler_secondary="g++"
 src="./src"
 build="./bin"
 
+#options="-Wall -Wextra -pipe $optimization -std=$standard"
 options="-Wall -pipe $optimization -std=$standard"
 
 if [ "$1" = "DEBUG" ]

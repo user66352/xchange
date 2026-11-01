@@ -2,19 +2,22 @@
 #define XCD_HPP
 
 #include <thread>
+#include <atomic>
+
 #include "xcd_protocol_handler.hpp"
 
-void cleanUp();
 
 class ConnectionManager
 {
     private:
-        PROTOCOL_VERSION connected_version = PV_NONE;
+        PROTOCOL_VERSION connected_version = PV_NONE; // TODO: change to SECURITY_VERSION
         ProgramState state;
         Parameter params;
         CTRL_FRAME ctrl_header;
         int clientSocket = 0;
         int err_state = 0;
+        std::atomic<bool> done{false};
+        std::jthread worker;
         
         int pvIsValid(PROTOCOL_VERSION pv)
         {
@@ -87,15 +90,18 @@ class ConnectionManager
                         #ifdef DEBUG
                         std::cout << "DEBUG::ConnectionManager::reading ctrl frame" << std::endl;
                         #endif
+
+                        #ifdef DEBUG
+                        std::cout << "DEBUG::ConnectionManager::mainLoop::clientSocket: " << (int) clientSocket << std::endl;
+                        #endif
                         
                         //reading client ctrl_frame from socket
                         int err = sio::read_from_socket(clientSocket, &ctrl_header, CTRL_FRAME_SIZE, MSG_WAITALL);
                         if(!err)
                         {
-                            // memcpy(&ctrl_header, buff, CTRL_FRAME_SIZE);
                             if(ctrlFrameValid())
                             {
-                                connected_version = ctrl_header.pv;
+                                connected_version = ctrl_header.pv; // TODO: change to connected_version = ctrl_header.sv
                                 state = STATE_START_PROTOCOL_MANAGER;
                             }
                             else
@@ -106,12 +112,12 @@ class ConnectionManager
                         }
                         else
                             state = STATE_STOP_CONNECTION_MANAGER;
-                        break;                    
+                        break;
                     }
 
                     case STATE_START_PROTOCOL_MANAGER:
                     {
-                        params.sv = secVersionLookupMap.at(connected_version);
+                        params.sv = secVersionLookupMap.at(connected_version); // TODO: change to params.sv = connected_version
 
                         DefaultProtocolHandler ph_default(clientSocket, params, ctrl_header);
                         if(ph_default.getError())
@@ -133,6 +139,7 @@ class ConnectionManager
                         break;
                 }
             }
+            done = true;
         }
 
     public:
@@ -141,11 +148,19 @@ class ConnectionManager
             clientSocket = sock;
             params = p;
             state = STATE_RCV_CTRL_FRAME;
-            mainLoop();
+
+            #ifdef DEBUG
+            std::cout << "DEBUG::ConnectionManager::clientSocket: " << (int) clientSocket << std::endl;
+            #endif
+
+            worker = std::jthread{&ConnectionManager::mainLoop, this};
         }
 
         ~ConnectionManager() {}
-};
 
+        int GetClientSocket() { return clientSocket; }
+
+        bool isDone() { return done.load(); }
+};
 
 #endif
