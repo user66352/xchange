@@ -246,7 +246,10 @@ int mainLoop(int serverSocket, Parameter params)
 
                 // add a new connection manager thread
                 std::lock_guard<std::mutex> lock(ListLock);
-                ConnectionManagerList.push_back(new ConnectionManager(clientSocket, params));
+                if(ConnectionManagerList.size() >= MAX_CONNECTED_CLIENTS)
+                    close(clientSocket);
+                else
+                    ConnectionManagerList.push_back(new ConnectionManager(clientSocket, params));
 
                 state = STATE_WAIT_FOR_CONNECTION;
                 break;
@@ -352,7 +355,7 @@ int main(int argc, char* argv[])
     }
 
     // listening to the assigned socket, max 10 parallel connections/clients
-    err = listen(serverSocket, MAX_CONNECTED_CLIENTS);
+    err = listen(serverSocket, 2);
     if(err)
     {
         *global_info.stderrStream << "main::Error setting up server socket to listen at port: " << static_cast<int>(params.port) << std::endl;
