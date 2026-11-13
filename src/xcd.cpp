@@ -131,10 +131,17 @@ int parseArgs(int argc, char* argv[], Parameter &params)
             continue;
         }
 
-        if( tmp_str == "--whitelist" )
+        if( tmp_str == "--wl-encryption" )
         {
             i++;
             params.encryptionWhiteList = argv[i];
+            continue;
+        }
+
+        if( tmp_str == "--wl-protocol" )
+        {
+            i++;
+            params.protocolWhitelist = argv[i];
             continue;
         }
 
@@ -246,17 +253,13 @@ int mainLoop(int serverSocket, Parameter params)
 
                 // add a new connection manager thread
                 std::lock_guard<std::mutex> lock(ListLock);
-                if(ConnectionManagerList.size() >= MAX_CONNECTED_CLIENTS)
-                    close(clientSocket);
-                else
-                    ConnectionManagerList.push_back(new ConnectionManager(clientSocket, params));
+                ConnectionManagerList.push_back(new ConnectionManager(clientSocket, params));
 
                 state = STATE_WAIT_FOR_CONNECTION;
                 break;
             }
 
             case STATE_STOP_SERVER:
-                // TODO: for gracefull shutdown wait here until ConnectionManagerList.size() == 0
                 serve = false;
                 break;
 
@@ -312,8 +315,41 @@ int main(int argc, char* argv[])
     int args_err = checkArgsPlausibility(params);
     if(args_err) return 1;
 
-    // fill whitelist
-    if(!params.encryptionWhiteList.empty()) params.allowedEncryptionVec = tool::splitEncryptionWhitelist(params.encryptionWhiteList);
+    // prepare security whitelist
+    if(!params.encryptionWhiteList.empty())
+    {
+        std::vector<std::string> ewlist = tool::splitString(params.encryptionWhiteList, ',');
+        if(!ewlist.empty()) {
+            params.allowedEncryptionVec.clear();
+            for(std::string svstr: ewlist ) {
+                if(selectionToSecVersionMap.find(svstr) != selectionToSecVersionMap.end())
+                    params.allowedEncryptionVec.push_back(selectionToSecVersionMap[svstr]);
+                else {
+                    *global_info.stderrStream << "Unknown encryption method: " << svstr << std::endl;
+                    cleanUp();
+                    return(1);
+                }
+            }
+        }
+    }
+
+    // prepare protocol whitelist
+    if(!params.protocolWhitelist.empty())
+    {
+        std::vector<std::string> pwlist = tool::splitString(params.protocolWhitelist, ',');
+        if(!pwlist.empty()) {
+            params.allowedProtocolVec.clear();
+            for( std::string pvstr:pwlist ) {
+                if(selectionToProtocolVersionMap.find(pvstr) != selectionToProtocolVersionMap.end())
+                    params.allowedProtocolVec.push_back(selectionToProtocolVersionMap[pvstr]);
+                else {
+                    *global_info.stderrStream << "Unknown protocol version: " << pvstr << std::endl;
+                    cleanUp();
+                    return(1);
+                }
+            }
+        }
+    }
 
     // defining streams
     std::ofstream out_stream;
@@ -334,7 +370,7 @@ int main(int argc, char* argv[])
     int serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if(serverSocket < 0)
     {
-        *global_info.stderrStream << "main::Error creating socket." << std::endl;
+        *global_info.stderrStream << "Error creating server socket." << std::endl;
         cleanUp();
         return(1);
     }
@@ -349,27 +385,22 @@ int main(int argc, char* argv[])
     int err = bind(serverSocket, reinterpret_cast<struct sockaddr*>(&serverAddress), sizeof(serverAddress));
     if(err)
     {
-        *global_info.stderrStream << "main::Error binding socket." << std::endl;
+        *global_info.stderrStream << "Error binding socket." << std::endl;
         cleanUp();
         return(1);
     }
 
     // listening to the assigned socket, max 10 parallel connections/clients
-    err = listen(serverSocket, 2);
+    err = listen(serverSocket, MAX_CONNECTED_CLIENTS);
     if(err)
     {
-        *global_info.stderrStream << "main::Error setting up server socket to listen at port: " << static_cast<int>(params.port) << std::endl;
+        *global_info.stderrStream << "Error setting up server socket to listen at port: " << static_cast<int>(params.port) << std::endl;
         cleanUp();
         return(1);
     }
 
-    #ifdef DEBUG
-    std::cout << "DEBUG::xcd.cpp::main::serverSocket: " << (int) serverSocket << std::endl;
-    #endif
-
     int error = mainLoop(serverSocket, params);
 
-    // clean up
     cleanUp();
 
     return error;

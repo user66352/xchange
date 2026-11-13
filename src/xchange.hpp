@@ -16,12 +16,11 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
-#include <linux/sockios.h>  // Required for SIOCOUTQ / TIOCOUTQ
 #include <errno.h>
 #include <poll.h>
 #include <unistd.h>
 
-std::string program_version_str = "0.1.10";
+std::string program_version_str = "0.2.0";
 
 /* memory size macros */
 #define  B(x)  (x)
@@ -44,7 +43,9 @@ enum FLAGS : uint8_t
     FLAG_NEW_TRANSMISSION = 0x02,
     FLAG_END_OF_TRANSMISSION = 0x04,
     FLAG_BINARY_TRANSMISSION = 0x08,
-    FLAG_ENCRYPTED = 0x16
+    FLAG_ACK_FRAME = 0x16,
+    FLAG_ENCRYPTED = 0x32,
+    FLAG_KEY_DATA = 0x64
 };
 
 enum DATA_TYPE
@@ -58,28 +59,23 @@ enum DATA_TYPE
 enum PROTOCOL_VERSION : uint16_t
 {
     PV_NONE,
-    PV_00_01,       // Default Protocol without encryption
-    PV_CHACHA20,    // with CHACHA20 encryption
-    PV_XCHACHA20POLY,   // data encrypted with xchacha20 authenticated with poly1305tls
-    PV_AES_GCM,
+    PV_X25519,              // unauthenticated public key exchange
+    PV_PSK_X25519,          // authenticated public key exchange with symmetric pre-shared key
+    //PV_KPK_X25519,          // key exchange with public key provided localy/from file (requires persistent key pair on client/server)
     PV_LAST
 };
 
 std::vector<PROTOCOL_VERSION> PROTOCOL_VERSION_VEC =
 {
-    PV_NONE,
-    PV_00_01,
-    PV_CHACHA20,
-    PV_XCHACHA20POLY,
-    PV_AES_GCM,
-    PV_LAST
+    PV_X25519,          // unauthenticated key exchange with forward secrecy
+    PV_PSK_X25519       // key xchange with pre-shared key authentication, forward secrecy
+    // PV_KPK_X25519       // key exchange with known public keys (client knows server public key), not yet implemented
 };
 
 // encodes the encryption method used for the protocol in CTRL_FRAME
 enum SECURITY_VERSION : uint8_t
 {
     SV_NONE,
-    SV_PLAIN,
     SV_CHACHA20,
     SV_XCHACHA20POLY,
     SV_AES_GCM,
@@ -88,17 +84,16 @@ enum SECURITY_VERSION : uint8_t
 
 std::vector<SECURITY_VERSION> SECURITY_VERSION_VEC =
 {
-    SV_PLAIN,
     SV_CHACHA20,
     SV_XCHACHA20POLY,
     SV_AES_GCM,
 };
 
-// lookup table to resolve protocol_version into security_version
-// might need to be consolidated later into one
-std::map<std::string, SECURITY_VERSION> selectionToSecVersionMap = { {"pln", SV_PLAIN}, {"cha", SV_CHACHA20}, {"xch", SV_XCHACHA20POLY}, {"aes", SV_AES_GCM} };
-std::map<PROTOCOL_VERSION, SECURITY_VERSION> secVersionLookupMap = { {PV_00_01, SV_PLAIN}, {PV_CHACHA20, SV_CHACHA20}, {PV_XCHACHA20POLY, SV_XCHACHA20POLY}, {PV_AES_GCM, SV_AES_GCM} };
-std::map<SECURITY_VERSION, PROTOCOL_VERSION> proVersionLookupMap = { {SV_PLAIN, PV_00_01}, {SV_CHACHA20, PV_CHACHA20}, {SV_XCHACHA20POLY, PV_XCHACHA20POLY}, {SV_AES_GCM, PV_AES_GCM} };
+std::map<std::string, SECURITY_VERSION> selectionToSecVersionMap = { {"cha", SV_CHACHA20}, {"xch", SV_XCHACHA20POLY}, {"aes", SV_AES_GCM} };
+
+// uaut: unauthenticated public key exchange
+// apsk: authenticated public key exchange with pre-shared-key
+std::map<std::string, PROTOCOL_VERSION> selectionToProtocolVersionMap = { {"uaut", PV_X25519}, {"apsk", PV_PSK_X25519} };
 
 //-------------------------------------------------
 //------------ FRAME DEFINITIONS BEGIN ------------
@@ -145,8 +140,8 @@ struct XCD_GLOBAL_INFO
     bool filesToStdout = false;                 // if true received files redirected to stdoutStream
 } global_info;
 
-PROTOCOL_VERSION PV_DEFAULT = PV_00_01;         // default protocol version to use in case version was not specified by user (default is plain text)
-SECURITY_VERSION SV_DEFAULT = SV_PLAIN;
+PROTOCOL_VERSION PV_DEFAULT = PV_X25519;        // default protocol version to use in case version was not specified by user (default is plain text)
+SECURITY_VERSION SV_DEFAULT = SV_CHACHA20;
 
 const int EOT = -2;                 // END-OF-TRANSMISSION
 
@@ -167,6 +162,7 @@ const int CTRL_FRAME_SIZE = sizeof(CTRL_FRAME);
 const int DATA_FRAME_HEADER_SIZE = sizeof(DATA_FRAME_HEADER);
 
 const int MAX_IV_SIZE = 24;                                                     // iv length of XChaCha, set fixed to prevent variable length array warnings
+const int MAX_KEY_SIZE = 32;
 const int MAX_DATA_FRAME_SIZE = MSS;                                            // max bytes send at once as one; considered a frame (meta data/header + user data)
 const int MAX_DATA_BLOCK_SIZE = MAX_DATA_FRAME_SIZE - DATA_FRAME_HEADER_SIZE;   // fit data frame to non-jumbo tcp frame , max user data bytes per frame
 
@@ -207,24 +203,19 @@ namespace tool
         return return_val;
     }
 
-    // splits whitelist str and returns a vector with allowed sec versions
-    std::vector<SECURITY_VERSION> splitEncryptionWhitelist(std::string wlStr)
+    // splits a list of values inside a string based of the given delimiter
+    // returns a vector of substrings
+    std::vector<std::string> splitString(std::string str, char delimiter)
     {
         std::string                   token;
-        std::stringstream             ss(wlStr);
+        std::stringstream             ss(str);
         std::vector<std::string>      tmpVec;
-        std::vector<SECURITY_VERSION> returnVec;
 
-        while(std::getline(ss, token, ',')) {
+        while(std::getline(ss, token, delimiter)) {
             tmpVec.emplace_back(token);
         }
 
-        for(std::string &s : tmpVec) {
-            if(selectionToSecVersionMap.contains(s))
-                returnVec.emplace_back(selectionToSecVersionMap[s]);
-        }
-
-        return returnVec;
+        return tmpVec;
     }
 
     // takes a pointer to a buffer, returns a hex string of buffer values

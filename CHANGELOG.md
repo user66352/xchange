@@ -1,5 +1,29 @@
 # Change Log  
-
+  
+  
+## Ver. 0.2.0  
+  
+### Added  
+  
+- new option --wl-protocol (protocol whitelist) for the server (xcd)  
+    - to distinguish between different key exchange methods different protocl versions are now being used  
+    - by default xcd will allow clients using all protocols  
+    - --wl-protocol allows to setup a whitelist for key exchange protocls  
+    -available protocols:  
+    - 'uaut': unauthenticated public key exchange (no auth key required)  
+    - 'apsk': public key exchange authenticated with a pre-shared-key, that key needs to be available to client and server  
+  
+### Changed  
+  
+- encryption keys are now derived via public key exchange (X25519 algorithm)  
+    - that exchange can be performed authenticated or unauthenticated  
+        - when unauthenticated without psk a Man-in-the-Middle attack would still go undetected  
+    - when the client is started providing a key, this key is being used to encrypt and authenticate the initial key exchange  
+        - this auth key also needs to be provided to the server  
+- by using new keys for every new connection xchange now provides forward secrecy  
+- option security whitelist was renamed to --wl-encryption  
+  
+  
 ## Ver. 0.1.10  
 
 ### Added  
@@ -8,11 +32,13 @@
 	- more clients would be possible but that would be beyond the expected scope of this project  
 	- that can be increased with MAX_CONNECTED_CLIENTS in xchange.hpp  
   
+  
 ## Ver. 0.1.9  
 
 ### Fixed  
 
 - a bug that required --whitelist settings, if --whitelist is not set on xcd all encryption modes are now available  
+  
   
 ## Ver. 0.1.8  
 

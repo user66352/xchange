@@ -48,7 +48,6 @@ class ChaCha20_Decrypt : public DecryptionInterface
 
         int getMacSize() override { return POLY1305_MAC_LENGTH; }
 
-
         void setIV(void *nonce) override
         {
             memcpy(iv, nonce, CHACHA20_IV_LENGTH);
@@ -58,6 +57,8 @@ class ChaCha20_Decrypt : public DecryptionInterface
         int readKey(std::string keyFile) override
         {
             int err = tool::readBinaryKey(keyFile, key, CHACHA20_KEY_LENGTH);
+
+            incrementIV(iv, CHACHA20_IV_LENGTH);
 
             // create session key
             if(!err)
@@ -70,6 +71,8 @@ class ChaCha20_Decrypt : public DecryptionInterface
         void setKey(void *buff) override
         {
             memcpy(key, buff, CHACHA20_KEY_LENGTH);
+
+            incrementIV(iv, CHACHA20_IV_LENGTH);
 
             // create session key
             deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
@@ -139,6 +142,8 @@ class ChaCha20_Encrypt : public EncryptionInterface
         {
             int err = tool::readBinaryKey(keyFile, key, CHACHA20_KEY_LENGTH);
 
+            incrementIV(iv, CHACHA20_IV_LENGTH);
+
             // create session key
             if(!err)
                 deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
@@ -151,8 +156,16 @@ class ChaCha20_Encrypt : public EncryptionInterface
         {
             memcpy(key, buff, CHACHA20_KEY_LENGTH);
 
+            incrementIV(iv, CHACHA20_IV_LENGTH);
+
             // create session key
             deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
+        }
+
+        // set IV for return channel
+        void setIV(void *buffer) override
+        {
+            memcpy(iv, buffer, CHACHA20_IV_LENGTH);
         }
 
         // length: data frame size in inBuffer (header + data <= CHACHAPOLY_DATA_FRAME_SIZE)

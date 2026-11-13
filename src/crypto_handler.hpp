@@ -2,7 +2,8 @@
 #define CRYPTO_HANDLER_HPP
 
 /*
-Encryption and Decryption function as generic classes for all implemented encryption methods (chacha, xchacha, aes, ...)
+Encryption and Decryption function as generic classes for all implemented encryption methods (chacha, xchacha, aes, ...).
+All encryption methods used and developed based on libcrypto++ 8.9.0
 */
 
 #include <memory>
@@ -71,6 +72,10 @@ class Encryption
 
         void setKey(void *buff) {
             enc_ptr->setKey(buff);
+        }
+
+        void setIV(void *buffer) {
+            enc_ptr->setIV(buffer);
         }
 
         int encrypt(void *inBuffer, void* outBuffer, size_t length) {

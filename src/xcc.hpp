@@ -20,6 +20,7 @@ struct TransferInfo
     PROTOCOL_VERSION pv = PV_NONE;
     SECURITY_VERSION secVer = SV_NONE;
     TransferMode mode = MODE_NONE;
+    DATA_TYPE dtype =TYPE_NONE;
     uint64_t bandwidth = 0;
     byte TransmissionID = 0x00;
     bool stats = false;

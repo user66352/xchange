@@ -1,8 +1,74 @@
 #ifndef SOCKETIO_HANDLER_HPP
 #define SOCKETIO_HANDLER_HPP
 
+#include <cryptopp/xed25519.h>
+
 #include "xcc.hpp"
 #include "crypto_handler.hpp"
+
+enum CHANNEL_TYPE
+{
+    CNL_RCV,
+    CNL_SND
+};
+
+struct CHANNEL_INFO
+{
+    byte TransmissionID = 0;
+    uint32_t frame_order_nbr = 0;
+    DATA_TYPE mode = TYPE_NONE;
+    PROTOCOL_VERSION pv = PV_NONE;
+    SECURITY_VERSION sv = SV_NONE;
+};
+
+void printError(std::string err_msg) {
+    #ifdef SERVER
+    *global_info.stderrStream << tool::current_time_string() << "::" << err_msg << std::endl;
+    #endif
+
+    #ifdef CLIENT
+    std::cerr << err_msg << std::endl;
+    #endif
+}
+
+class PublicKeyManager
+{
+    private:
+        CryptoPP::x25519 keyx;
+        CryptoPP::AutoSeededRandomPool rng;
+        CryptoPP::byte privateKey[CryptoPP::x25519::SECRET_KEYLENGTH] = { 0 };
+        CryptoPP::byte publicKey[CryptoPP::x25519::PUBLIC_KEYLENGTH] = { 0 };
+        CryptoPP::byte sharedKey[CryptoPP::x25519::SHARED_KEYLENGTH] = { 0 };
+
+    public:
+        PublicKeyManager()
+        {
+            keyx.GenerateKeyPair(rng, privateKey, publicKey);
+        }
+
+        ~PublicKeyManager()
+        {
+            memset(privateKey, 0x00, CryptoPP::x25519::SECRET_KEYLENGTH);
+            memset(publicKey, 0x00, CryptoPP::x25519::PUBLIC_KEYLENGTH);
+            memset(sharedKey, 0x00, CryptoPP::x25519::SHARED_KEYLENGTH);
+        }
+
+        int GetSharedKeyLength() { return CryptoPP::x25519::SHARED_KEYLENGTH; }
+
+        int GetPublicKeyLength() { return CryptoPP::x25519::PUBLIC_KEYLENGTH; }
+
+        CryptoPP::byte *GetPublicKey() { return publicKey; }
+
+        CryptoPP::byte *GetSharedKey() { return sharedKey; }
+
+        CryptoPP::byte *GenerateSharedKey(CryptoPP::byte *partnerPublicKey)
+        {
+            if(keyx.Agree(sharedKey, privateKey, partnerPublicKey))
+                return sharedKey;
+            else
+                return nullptr;
+        }
+};
 
 class SocketIO_Manager
 {
@@ -10,26 +76,21 @@ class SocketIO_Manager
         int error = 0;
         int ClientSocket = 0;
         int DATA_BLOCK_SIZE = 0;
-        uint32_t frame_order_nbr = 0;
-        bool encrypted = false;
         char ioBuffer[MAX_DATA_FRAME_SIZE];
         char plnBuffer[MAX_DATA_FRAME_SIZE + 1];
-        CTRL_FRAME ctrl_frame;
+        PublicKeyManager pkm;
+        CHANNEL_INFO rcv_chn_info;
+        CHANNEL_INFO snd_chn_info;
         Decryption *dec = nullptr;
         Encryption *enc = nullptr;
 
-        void init(SECURITY_VERSION sv) {
-            if(sv != SV_PLAIN) {
-                encrypted = true;
-                dec = new Decryption(sv);
-                enc = new Encryption(sv);
-                int block_size_enc = enc->getDataBlockSize();
-                int block_size_dec = dec->getDataBlockSize();
-                if(block_size_dec == block_size_enc) DATA_BLOCK_SIZE = block_size_enc;
-                else error = 1;
-            } else {
-                DATA_BLOCK_SIZE = MAX_DATA_BLOCK_SIZE;
-            }
+        void init() {
+            dec = new Decryption(rcv_chn_info.sv);
+            enc = new Encryption(snd_chn_info.sv);
+            int block_size_enc = enc->getDataBlockSize();
+            int block_size_dec = dec->getDataBlockSize();
+            if(block_size_dec == block_size_enc) DATA_BLOCK_SIZE = block_size_enc;
+            else error = 1;
         }
 
         // return 0 on success, -1 on failure
@@ -37,54 +98,122 @@ class SocketIO_Manager
         {
             if(length > MAX_DATA_FRAME_SIZE)
             {
-                std::cerr << "xcc_protocol_handler.hpp::sendDataBuffer::ERROR::max data frame size exceeded" << std::endl;
+                std::string error_msg = "xcc_protocol_handler.hpp::sendDataBuffer::ERROR::max data frame size exceeded";
+                printError(error_msg);
                 return -1;
             }
             return sio::write_to_socket(sock, buffer, length);
         }
 
         int VerifyDataFrame(DATA_FRAME_HEADER &data_header) {
-            // test for correct transfer id
-            if(data_header.transmission_id != ctrl_frame.transmission_id) {
-                *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::VerifyDataFrame::Error::Transmission ID missmatch." << std::endl;
+
+            if(data_header.transmission_id != rcv_chn_info.TransmissionID) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::VerifyDataFrame::Error::Transmission ID missmatch.";
+                printError(error_msg);
                 return 1;
             }
 
             // test for correct frame order
-            if(data_header.order_nbr != frame_order_nbr) {
-                *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::VerifyDataFrame::Error::Frame out of order." << std::endl;
+            if(data_header.order_nbr != rcv_chn_info.frame_order_nbr) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::VerifyDataFrame::Error::Frame out of order.";
+                printError(error_msg);
                 return 1;
             }
 
             // test if data length fits protocol expectation
             if(data_header.data_size > DATA_BLOCK_SIZE) {
-                *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::VerifyDataFrame::Error::Data frame data size too large." << std::endl;
+                *global_info.stderrStream << tool::current_time_string() << "::socketIO_handler.hpp::SocketIO_Manager::VerifyDataFrame::Error::Data frame data size too large." << std::endl;
                 return 1;
             }
 
             // test data integrity
             chksum_t ChkSum = tool::fletcher16(&plnBuffer[DATA_FRAME_HEADER_SIZE], data_header.data_size);
             if(ChkSum != data_header.chksum) {
-                *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::VerifyDataFrame::Error::Checksum missmatch." << std::endl;
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::VerifyDataFrame::Error::Checksum missmatch.";
+                printError(error_msg);
                 return 1;
             }
 
             return 0;
         }
 
+        int SendLocalPublicKey()
+        {
+            return sio::write_to_socket(ClientSocket, pkm.GetPublicKey() , CryptoPP::x25519::PUBLIC_KEYLENGTH);
+        }
+
+        int SendLocalPublicKeyEncrypted()
+        {
+            DataFrame data_frame;
+            CryptoPP::byte *pkey;
+
+            pkey = pkm.GetPublicKey();
+
+            #ifdef DEBUG
+            std::cout << "socketIO_handler.hpp::SocketIO_Manager::SendLocalPublicKeyEncrypted::local/sent public key:\n" << tool::byteToHex(pkey, CryptoPP::x25519::SHARED_KEYLENGTH, 'l') << std::endl;
+            #endif
+
+            data_frame.setFlag(FLAG_KEY_DATA);
+            data_frame.setTransmissionID(snd_chn_info.TransmissionID);
+            data_frame.setData(pkey, CryptoPP::x25519::PUBLIC_KEYLENGTH);
+
+            int ret_val = SendDataFrame(data_frame);
+
+            return ret_val;
+        }
+
+        // return pointer to sharedKey or nullptr on failure
+        CryptoPP::byte *GenerateSharedKey()
+        {
+            CryptoPP::byte ppkey[CryptoPP::x25519::PUBLIC_KEYLENGTH];
+
+            int err = sio::read_from_socket(ClientSocket, ppkey, CryptoPP::x25519::PUBLIC_KEYLENGTH, MSG_WAITALL);
+            if(!err)
+                return pkm.GenerateSharedKey(ppkey);
+            return nullptr;
+        }
+
+        // return pointer to sharedKey or nullptr on failure
+        CryptoPP::byte *GenerateSharedKeyAuthenticated()
+        {
+            CryptoPP::byte *partner_key_pointer = reinterpret_cast<CryptoPP::byte *>(&plnBuffer[DATA_FRAME_HEADER_SIZE]);
+
+            if(ReadDataFrame() == CryptoPP::x25519::PUBLIC_KEYLENGTH) {
+
+                #ifdef DEBUG
+                std::cout << "socketIO_handler.hpp::SocketIO_Manager::GenerateSharedKeyAuthenticated::received/remote public key:\n" << tool::byteToHex(partner_key_pointer, CryptoPP::x25519::SHARED_KEYLENGTH, 'l') << std::endl;
+                #endif
+
+                return pkm.GenerateSharedKey(partner_key_pointer);
+            }
+
+            return nullptr;
+        }
+
+        void SetSharedKey(CryptoPP::byte *sharedKey)
+        {
+            enc->setKey(sharedKey);
+            dec->setKey(sharedKey);
+        }
 
     public:
-        SocketIO_Manager(int sock, SECURITY_VERSION sv) {
+        SocketIO_Manager(int sock, SECURITY_VERSION sv, PROTOCOL_VERSION pv) {
             ClientSocket = sock;
-            init(sv);
+            rcv_chn_info.pv = pv;
+            rcv_chn_info.sv = sv;
+            snd_chn_info.pv = pv;
+            snd_chn_info.sv = sv;
+
+            init();
         }
 
         ~SocketIO_Manager() {
             if(dec) delete dec;
             if(enc) delete enc;
+            memset(plnBuffer, 0x00, MAX_DATA_FRAME_SIZE + 1 );
         }
 
-        bool isEncrypted() { return encrypted; }
+        // bool isEncrypted() { return encrypted; }
 
         int GetError() { return error; }
 
@@ -92,11 +221,72 @@ class SocketIO_Manager
 
         char *GetPlnBuffer() { return plnBuffer; }
 
-        void SetCtrlFrame(CTRL_FRAME cf) { ctrl_frame = cf; }
+        void SetFrameOrder(int nbr) {
+            snd_chn_info.frame_order_nbr = nbr;
+            rcv_chn_info.frame_order_nbr = nbr;
+        }
 
-        void SetFrameOrder(int nbr) { frame_order_nbr = nbr; }
+        int PublicKeyExchange()
+        {
+            CryptoPP::byte *sharedKey = nullptr;
 
-        int GetFrameOrder() { return frame_order_nbr; }
+            int err = SendLocalPublicKey();
+            if(err)
+            {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::PublicKeyExchange::Error::SendLocalPublicKey returned with error!";
+                printError(error_msg);
+                return 1;
+            }
+
+            sharedKey = GenerateSharedKey();
+            if(!sharedKey)
+            {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::PublicKeyExchange::Error::Generating the shared key failed!";
+                printError(error_msg);
+                return 1;
+            }
+
+            #ifdef DEBUG
+            std::cout << "socketIO_handler.hpp::SocketIO_Manager::PublicKeyExchange::agreed shared key:\n" << tool::byteToHex(sharedKey, CryptoPP::x25519::SHARED_KEYLENGTH, 'l') << std::endl;
+            #endif
+
+            SetSharedKey(sharedKey);
+
+            return 0;
+        }
+
+        int PublicKeyExchangeAuthenticated()
+        {
+            if(SendLocalPublicKeyEncrypted())
+            {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::PublicKeyExchangeAuthenticated::Error::SendLocalPublicKeyEncrypted returned with error!";
+                printError(error_msg);
+                return 1;
+            }
+
+            CryptoPP::byte *sharedKey = GenerateSharedKeyAuthenticated();
+
+            if(!sharedKey)
+            {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::PublicKeyExchangeAuthenticated::Error::Generating the shared key failed!";
+                printError(error_msg);
+                return 1;
+            }
+
+            #ifdef DEBUG
+            std::cout << "socketIO_handler.hpp::SocketIO_Manager::PublicKeyExchangeAuthenticated::agreed shared key:\n" << tool::byteToHex(sharedKey, CryptoPP::x25519::SHARED_KEYLENGTH, 'l') << std::endl;
+            #endif
+
+            SetSharedKey(sharedKey);
+
+            SetFrameOrder(0);
+
+            return 0;
+        }
+
+        int GetFrameOrderRcvChn() { return rcv_chn_info.frame_order_nbr; }
+
+        int GetFrameOrderSndChn() { return snd_chn_info.frame_order_nbr; }
 
         // reads a data frame from socket into plnBuffer
         // returns amount of user data received on success (>0), return value does not include data_header size only the payload size
@@ -106,56 +296,38 @@ class SocketIO_Manager
         int ReadDataFrame() {
             DATA_FRAME_HEADER data_header;
 
-            if(encrypted) {
-                // read encrypted data frame
-                int err = sio::read_from_socket(ClientSocket, ioBuffer, MAX_DATA_FRAME_SIZE, MSG_WAITALL);
-                if(err) {
-                    *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::ReadDataFrame::Error::Error reading frame from socket." << std::endl;
-                    return -1;
-                }
-                // decrypt data from rcv_buffer to pln_buffer
-                bool verified = dec->decrypt(ioBuffer, plnBuffer, MAX_DATA_FRAME_SIZE);
-                if(!verified) {
-                    *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::ReadDataFrame::Error::Frame verification failed." << std::endl;
-                    return -1;
-                }
-                // copy data_header from buffer
-                memcpy(&data_header, plnBuffer, DATA_FRAME_HEADER_SIZE);
-            } else {
-                // read plain data frame
-                // read data frame header first
-                int err = sio::read_from_socket(ClientSocket, &data_header, DATA_FRAME_HEADER_SIZE, MSG_WAITALL | MSG_PEEK);
-                if(err) {
-                    *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::ReadDataFrame::Error::Could not read data frame header." << std::endl;
-                    return -1;
-                }
-
-                // read entire frame to plain buffer
-                if(data_header.data_size <= MAX_DATA_BLOCK_SIZE) {
-                    size_t frame_size = DATA_FRAME_HEADER_SIZE + data_header.data_size;
-                    if(frame_size > MAX_DATA_FRAME_SIZE) {
-                        *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::ReadDataFrame::Error::Frame size too large." << std::endl;
-                        return -1;
-                    }
-                    err = sio::read_from_socket(ClientSocket, plnBuffer, frame_size, MSG_WAITALL);
-                    if(err) {
-                        *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::ReadDataFrame::Error::Could not read plain data frame." << std::endl;
-                        return -1;
-                    }
-                }
-            }
-
-            int verify_err = VerifyDataFrame(data_header);
-            if(verify_err) {
-                *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::ReadDataFrame::Error::Frame header verification failed." << std::endl;
+            // read encrypted data frame
+            int err = sio::read_from_socket(ClientSocket, ioBuffer, MAX_DATA_FRAME_SIZE, MSG_WAITALL);
+            if(err) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::ReadDataFrame::Error::Error reading frame from socket.";
+                printError(error_msg);
                 return -1;
             }
 
-            frame_order_nbr++;
+            // decrypt data from rcv_buffer to pln_buffer
+            bool verified = dec->decrypt(ioBuffer, plnBuffer, MAX_DATA_FRAME_SIZE);
+            if(!verified) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::ReadDataFrame::Error::Frame verification failed.";
+                printError(error_msg);
+                return -1;
+            }
+
+            // copy data_header from buffer
+            memcpy(&data_header, plnBuffer, DATA_FRAME_HEADER_SIZE);
+
+            int verify_err = VerifyDataFrame(data_header);
+            if(verify_err) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::ReadDataFrame::Error::Frame header verification failed.";
+                printError(error_msg);
+                return -1;
+            }
+            
+            rcv_chn_info.frame_order_nbr++;
 
             // close connection at 32bit rollover
-            if(frame_order_nbr == 0) {
-                *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::ReadDataFrame::Warning::Maximum frame count reached for transmission." << std::endl;
+            if(rcv_chn_info.frame_order_nbr == 0) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::ReadDataFrame::Warning::Maximum frame count reached for transmission.";
+                printError(error_msg);
                 return -1;
             }
 
@@ -164,7 +336,8 @@ class SocketIO_Manager
             if(data_header.data_size == 0) {
                 if(data_header.flags & FLAG_END_OF_TRANSMISSION) return_value = EOT;
                 else {
-                    *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::ReadDataFrame::Error::Empty (non-EOT) frame received." << std::endl;
+                    std::string error_msg = "::socketIO_handler.hpp::SocketIO_Manager::ReadDataFrame::Error::Empty (non-EOT) frame received.";
+                    printError(error_msg);
                     return -1;
                 }
             }
@@ -173,32 +346,35 @@ class SocketIO_Manager
         }
 
         // encrypts a data_frame if required and sends it
+        // sets frame order number and transmission id
+        // returns 0 on success, -1 on failure
         int SendDataFrame(DataFrame &df) {
             int send_err = 0;
-            if(encrypted) {
-                // encrypt data and send
-                int transmit_size = enc->encrypt(df.getTransmitBuffer(), ioBuffer, df.frameSize());
-                send_err = SendDataBuffer(ClientSocket, ioBuffer, transmit_size);
-            } else {
-                // send as plain text
-                send_err = SendDataBuffer(ClientSocket, df.getTransmitBuffer(), df.frameSize());
-            }
+
+            df.setOrder(snd_chn_info.frame_order_nbr);
+            df.setTransmissionID(snd_chn_info.TransmissionID);
+
+            // encrypt data and send
+            int transmit_size = enc->encrypt(df.getTransmitBuffer(), ioBuffer, df.frameSize());
+            send_err = SendDataBuffer(ClientSocket, ioBuffer, transmit_size);
+
+            snd_chn_info.frame_order_nbr++;
+
             return send_err;
         }
 
         // generate ctrl_frame for encryption, appends iv to ctrl_frame
-        int SendCtrlFrameEncrypted(TransferInfo info)
+        int SendCtrlFrameEncrypted()
         {
             ControlFrame control_frame;
             int iv_size = enc->getIVSize();
             CryptoPP::byte *iv = enc->getIV();
 
-            control_frame.setProtocolVer(info.pv);
-            control_frame.setSecurityVer(info.secVer);
-            control_frame.setFlag(FLAG_NEW_TRANSMISSION);
-            control_frame.setFlag(FLAG_ENCRYPTED);
-            control_frame.setTransmissionID(info.TransmissionID);
-            if(info.mode == MODE_FILE) control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
+            control_frame.setProtocolVer(snd_chn_info.pv);
+            control_frame.setSecurityVer(snd_chn_info.sv);
+            control_frame.setFlag(FLAG_NEW_TRANSMISSION | FLAG_ENCRYPTED);
+            control_frame.setTransmissionID(snd_chn_info.TransmissionID);
+            if(snd_chn_info.mode == TYPE_BIN) control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
 
             char sendBuffer[CTRL_FRAME_SIZE + MAX_IV_SIZE];
 
@@ -208,63 +384,99 @@ class SocketIO_Manager
             memcpy(&sendBuffer[CTRL_FRAME_SIZE], iv, iv_size);
 
             // send CTRL FRAME
-            return sio::write_to_socket(info.clientSocket, sendBuffer, CTRL_FRAME_SIZE + iv_size);
-        }
-
-        int SendCtrlFramePlain(TransferInfo info)
-        {
-            ControlFrame control_frame;
-
-            control_frame.setProtocolVer(info.pv);
-            control_frame.setSecurityVer(info.secVer);
-            control_frame.setFlag(FLAG_NEW_TRANSMISSION);
-            control_frame.setTransmissionID(info.TransmissionID);
-            if(info.mode == MODE_FILE) control_frame.setFlag(FLAG_BINARY_TRANSMISSION);
-
-            // send CTRL FRAME
-            return sio::write_to_socket(info.clientSocket, control_frame.getCtrlFrame(), CTRL_FRAME_SIZE);
+            return sio::write_to_socket(ClientSocket, sendBuffer, CTRL_FRAME_SIZE + iv_size);
         }
 
         ACK_ERROR_CODE GetAckFromSocket()
         {
             ACK_FRAME ack;
-            int sock_err = sio::read_from_socket(ClientSocket, &ack, ACK_FRAME_SIZE, MSG_WAITALL);
-            if(sock_err)
+            int ret_val = ReadDataFrame();
+            if(ret_val != ACK_FRAME_SIZE)
             {
-                std::cerr << "socketIO_handler.hpp::GetAckFromSocket::ERROR::Could not read ack from socket." << std::endl;
+                std::string error_msg = "socketIO_handler.hpp::GetAckFromSocket::ERROR::Could not read ack from socket.";
+                printError(error_msg);
                 return ACK_GENERAL_ERR;
-            } else if(strcmp(ack.ack, "ACK"))
+            }
+            
+            memcpy(&ack, &plnBuffer[DATA_FRAME_HEADER_SIZE], ACK_FRAME_SIZE);
+            
+            if(strcmp(ack.ack, "ACK"))
             {
-                std::cerr << "socketIO_handler.hpp::GetAckFromSocket::ERROR::malformed ack" << std::endl;
+                std::string error_msg = "socketIO_handler.hpp::GetAckFromSocket::ERROR::malformed ack";
+                printError(error_msg);
                 return ACK_GENERAL_ERR;
             }
             return ack.error;
         }
 
-        int SendAck(ACK_ERROR_CODE err)
+        int SendAck(ACK_ERROR_CODE err, byte TransmissionID)
         {
             ACK_FRAME ack;
+            DataFrame data_frame;
+
+            #ifdef DEBUG
+            std::cout << "socketIO_handler.hpp::SendAck::TransmissionID: " << (int) TransmissionID << std::endl;
+            #endif
+
             ack.error = err;
-            return sio::write_to_socket(ClientSocket, &ack, ACK_FRAME_SIZE);
+
+            data_frame.setFlag(FLAG_ACK_FRAME);
+            data_frame.setTransmissionID(TransmissionID);
+            data_frame.setOrder(snd_chn_info.frame_order_nbr);
+            data_frame.setData(&ack, ACK_FRAME_SIZE);
+
+            return SendDataFrame(data_frame);
         }
 
-        // read iv from socket and sets it on decryption module (dec)
+        void SetTransferMode(DATA_TYPE mode) { 
+            snd_chn_info.mode = mode;
+            rcv_chn_info.mode = mode;
+        }
+
+        void SetTransmissionID(byte tid) {
+            snd_chn_info.TransmissionID = tid;
+            rcv_chn_info.TransmissionID = tid;
+        }
+
+        // read iv from socket and sets it on selected module
         // return 0 on success, -1 on failure
-        int SetIVFromSocket()
+        int SetIVFromSocket(CHANNEL_TYPE ct)
         {
             int err = sio::read_from_socket(ClientSocket, ioBuffer, dec->getIVSize(), MSG_WAITALL);
             if(err)
             {
-                *global_info.stderrStream << tool::current_time_string() <<"::socketIO_handler.hpp::DefaultProtocolHandler::getIVFromSocket::Error::Could not read iv from socket." << std::endl;
+                std::string error_msg = "::socketIO_handler.hpp::SocketIO_Manager::SetIVFromSocket::Error::Could not read iv from socket.";
+                printError(error_msg);
                 return err;
             }
-            dec->setIV(ioBuffer);
+
+            switch (ct)
+            {
+            case CNL_RCV:
+                dec->setIV(ioBuffer);
+                break;
+            
+            case CNL_SND:
+                enc->setIV(ioBuffer);
+                break;
+            
+            default:
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::SetIVFromSocket::Error::Channel type unknown.";
+                printError(error_msg);
+                return -1;
+                break;
+            }
+
             return 0;
         }
 
         int DecReadKeyFromFile(std::string filename) { return dec->readKey(filename); }
 
         int EncReadKeyFromFile(std::string filename) { return enc->readKey(filename); }
+
+        Encryption *getEncryptionModule() { return enc; }
+
+        Decryption *getDecryptionModule() { return dec; }
 };
 
 #endif

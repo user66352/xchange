@@ -23,17 +23,18 @@ All encrypted data transfers support message authentication.
 Any tampered packed would trigger an authentication failure on the server.  
 In that case already received data is being dropped.  
   
-Since xchange does not rely on passwords it requires a 32byte key for encryption.  
-That key is a pre-shared key file available to the client (xcc) and the server (xcd).  
+Since xchange does not rely on passwords it uses 32byte keys for encryption.  
+Server and client derive their keys via X25519 key exchange.  
+By default this key exchange is unauthenticated and allows a potential Man-in-the-middle attack.  
+To prevent this server and client should use a pre-shared key that is used for authenticating the key exchange process and ensures an unexpected key replacement would be detected.  
+Xchange provides an option to set a psk for authenticated key exchange.   
   
 This key should only contain completelly random bytes (not a text file, not typed in by hand).  
 For example such a key file can be created with dd:  
   
 ```dd if=/dev/urandom of=keyfile.bin bs=32 count=1```  
   
-If no encryption method was specified xcc will default to plain text transfer.  
-To prevent unencrypted traffic and/or unauthorized clients from uploading xcd has the option --whitelist.  
-Start xcd with `--whitelist aes,cha,xch` to deny unauthorized clients or to limit connections to a specific encryption.  
+If no encryption method was specified xcc will default to ChaCha20-Poly1305 encryption.  
   
 Each transmitted data frame comes with its own checksum and frame counter to guarantee data integrity and in-order frame transfer.  
 That`s already done by TCP but better safe than sorry.  
@@ -45,7 +46,7 @@ So longer messages need to be send as file.
 The largest possible file size is about 6TB.  
 Right now the server closes any transfer after 2³² received frames ((0xffffffff - 1) x (~1.4kB per frame)).   
   
-It also does not provide any concurrent connections.  
+Up to 10 clients can connect at the same time.  
   
 Reagarding dependencies, outside of the C/C++ standard library xchange only depends on libcrypto++.  
 It should compile and run on all POSIX compliant systems.  
@@ -76,7 +77,7 @@ xcd -i 192.168.55.10 -p 10111 -k keyfile.bin -o /home/user/receivedFilesDir -m /
   
 ### Client (xcc):  
 
-- forward a message with default settings (no encryption):  
+- forward a message with default settings (ChaCha20-Poly1305, unauthenticated key exchange):  
 
 ```bash
 xcc -s 192.168.55.10 -m "very important message"
@@ -97,7 +98,7 @@ xcc -s 192.168.55.10 -p 10111 -b 256000 -S -f /file/to/forward/file.bin
 ```  
 
 
-- send a message encrypted with ChaCha20Poly1305:  
+- send a message encrypted with ChaCha20Poly1305 and key exchange authenticated by psk loaded from keyfile.key:  
 
 ```bash
 xcc -s 192.168.55.10 -k keyfile.key -e cha -m 'my message'

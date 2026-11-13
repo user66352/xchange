@@ -8,18 +8,72 @@ enum ProgramState
     STATE_NONE,
     STATE_GET_TYPE,
     STATE_RCV_INIT_ACK,
+    STATE_RCV_SRV_CTRL_FRAME,
+    STATE_RCV_SRV_IV,
     STATE_RCV_FINAL_ACK,
     STATE_SEND_INIT_CTRL_FRAME,
     STATE_SEND_DATA,
-    STATE_SET_CHACHA20_KEY,
+    STATE_SET_INITIAL_KEY,
     STATE_STOP_CLIENT
 };
+
 
 struct FileInfo
 {
     std::string filename = "";
     bool stdi = false;
 };
+
+namespace eph {
+
+    int pvIsValid(PROTOCOL_VERSION pv)
+    {
+        int valid = 0;
+
+        if(pv > PV_NONE && pv < PV_LAST)
+        {
+            for(PROTOCOL_VERSION ver : PROTOCOL_VERSION_VEC)
+            {
+                valid = pv == ver;
+                if(valid) break;
+            }
+        }
+
+        return valid;
+    }
+
+    // returns 1 if flags valid, 0 if not
+    int validFlags(uint8_t fl)
+    {
+        return ( ((fl & FLAG_NEW_TRANSMISSION) == FLAG_NEW_TRANSMISSION) || ((fl & FLAG_NEW_TRANSMISSION) == FLAG_NEW_TRANSMISSION) || ((fl & FLAG_BINARY_TRANSMISSION) == FLAG_BINARY_TRANSMISSION) );
+    }
+
+    // returns 1 if header is valid, 0 if not
+    int ctrlFrameValid(CTRL_FRAME &ctrl_frame)
+    {
+        int ret_value = 1;
+
+        if(!pvIsValid(ctrl_frame.pv)) {
+            *global_info.stderrStream << tool::current_time_string() << "::xcd.hpp::ConnectionManager::ctrlFrameValid::Unsupported protocol version." << std::endl;
+            return 0;
+        }
+
+        ret_value = ret_value && validFlags(ctrl_frame.flags);
+        ret_value = ret_value && ctrl_frame.transmission_id > 0;
+
+        return ret_value;
+    }
+
+    int RcvServerCtrlFrame(int sock, CTRL_FRAME &ctrl_frame)
+    {
+        //reading server ctrl_frame from socket
+        int err = sio::read_from_socket(sock, &ctrl_frame, CTRL_FRAME_SIZE, MSG_WAITALL);
+        if(!err) err = !(ctrlFrameValid(ctrl_frame));
+        return err;
+    }
+
+}
+
 
 // manage read from stdin or file
 class FileIO
@@ -89,19 +143,16 @@ class FileIO
         int ErrorState() { return error; }
 };
 
-class DefaultProtocolHandler
+
+class EncryptedProtocolHandler
 {
     private:
         TransferInfo info;
-        TransferMode mode = MODE_NONE;
+        DATA_TYPE dtype = TYPE_NONE;
         ProgramState state = STATE_NONE;
         FileIO *file_io = nullptr;
-        // Encryption *enc = nullptr;
         SocketIO_Manager *socketIO = nullptr;
         int DATA_BLOCK_SIZE = 0;
-        bool encrypted = false;
-        // char snd_buffer[MAX_DATA_FRAME_SIZE];
-        uint32_t frameCounter = 0;
         int clientSocket = 0;
         int error = 0;
 
@@ -114,7 +165,7 @@ class DefaultProtocolHandler
             FileInfo file_info;
             file_info.stdi = info.read_stdin;
 
-            if(info.mode == MODE_FILE) {
+            if(info.dtype == TYPE_BIN) {
                 file_info.filename = info.filePath;
             }
 
@@ -158,13 +209,12 @@ class DefaultProtocolHandler
             }
 
             // sending data
-            // first message frame has count 1
-            frameCounter = 1;
+            // first message frame has count 1 to not confuse it with frame 0 that is used for filename in file mode
+            socketIO->SetFrameOrder(1);
 
             // create data frame header
             data_frame.setFlag(FLAG_DATA_FRAME);
             data_frame.setTransmissionID(info.TransmissionID);
-            data_frame.setOrder(frameCounter);
 
             // set data in data frame
             char *data_buffer = const_cast<char *>(message.c_str());
@@ -174,12 +224,10 @@ class DefaultProtocolHandler
             if(send_err) return 1;
 
             data_frame.reset();
-            frameCounter++;
 
             // send EOT frame
             data_frame.setFlag(FLAG_END_OF_TRANSMISSION);
             data_frame.setTransmissionID(info.TransmissionID);
-            data_frame.setOrder(frameCounter);
             data_frame.setData(nullptr, 0);
 
             // encrypt data and send EOT frame
@@ -222,11 +270,9 @@ class DefaultProtocolHandler
             // send filename
             // create data frame header to transfer filename
             // filename characterized by order_counter == 0 && data_size > 0 && mode binary
-            frameCounter = 0;
             std::string filename = file_io->GetFilename();
             data_frame.setFlag(FLAG_DATA_FRAME);
             data_frame.setTransmissionID(info.TransmissionID);
-            data_frame.setOrder(frameCounter);
             data_frame.setData(const_cast<char *>(filename.c_str()), filename.size());
 
             int ret_val = socketIO->SendDataFrame(data_frame);
@@ -249,7 +295,8 @@ class DefaultProtocolHandler
             {
                 // read data + prepapre data frame
                 bytes_read = file_io->ReadBytes(inBuffer, DATA_BLOCK_SIZE);
-                data_frame.setOrder(++frameCounter);
+                data_frame.setFlag(FLAG_DATA_FRAME);
+                data_frame.setTransmissionID(info.TransmissionID);
                 data_frame.setTransmissionID(info.TransmissionID);
                 data_frame.setData(inBuffer, bytes_read);
 
@@ -286,7 +333,6 @@ class DefaultProtocolHandler
 
             // send end-of-transmission frame
             data_frame.reset();
-            data_frame.setOrder(++frameCounter);
             data_frame.setTransmissionID(info.TransmissionID);
             data_frame.setFlag(FLAG_END_OF_TRANSMISSION);
             data_frame.setData(nullptr, 0);
@@ -309,6 +355,8 @@ class DefaultProtocolHandler
 
         void ctrl_loop()
         {
+            CTRL_FRAME srv_ctrl_frame;
+
             int err = 0;
             bool running = true;
 
@@ -318,41 +366,32 @@ class DefaultProtocolHandler
                 {
                     case STATE_GET_TYPE:
                     {
-                        mode = info.mode;
-                        if(mode == MODE_NONE)
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_GET_TYPE" << std::endl;
+                        #endif
+                    
+                        dtype = info.dtype;
+                        if(dtype == TYPE_NONE)
                         {
                             error = 1;
                             std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Could not set transfer mode." << std::endl;
                             state = STATE_STOP_CLIENT;
-                        }
-                        else
-                            if(encrypted)
-                                state = STATE_SET_CHACHA20_KEY;
-                            else
-                                state = STATE_SEND_INIT_CTRL_FRAME;
-                        break;
-                    }
-
-                    case STATE_SET_CHACHA20_KEY:
-                    {
-                        err = socketIO->EncReadKeyFromFile(info.keyFile);
-                        if(err)
-                        {
-                            error = 1;
-                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Error reading key file." << std::endl;
-                            state = STATE_STOP_CLIENT;
-                        }
-                        else
+                        } else {
                             state = STATE_SEND_INIT_CTRL_FRAME;
+                            socketIO->SetTransferMode(dtype);
+                            socketIO->SetTransmissionID(info.TransmissionID);
+                        }
                         break;
                     }
 
                     case STATE_SEND_INIT_CTRL_FRAME:
                     {
-                        if(encrypted)
-                            err = socketIO->SendCtrlFrameEncrypted(info);
-                        else
-                            err = socketIO->SendCtrlFramePlain(info);
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_SEND_INIT_CTRL_FRAME" << std::endl;
+                        #endif
+
+                        socketIO->SetTransmissionID(info.TransmissionID);
+                        err = socketIO->SendCtrlFrameEncrypted();
                         if(err)
                         {
                             error = 1;
@@ -360,17 +399,71 @@ class DefaultProtocolHandler
                             state = STATE_STOP_CLIENT;
                         }
                         else
-                            state = STATE_RCV_INIT_ACK;
+                            state = STATE_RCV_SRV_CTRL_FRAME;
                         break;
                     }
 
-                    case STATE_RCV_INIT_ACK:
+                    case STATE_RCV_SRV_CTRL_FRAME:
                     {
-                        ACK_ERROR_CODE ackErr = socketIO->GetAckFromSocket();
-                        if(ackErr)
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_RCV_SRV_CTRL_FRAME" << std::endl;
+                        #endif
+
+                        err = eph::RcvServerCtrlFrame(clientSocket, srv_ctrl_frame);
+                        if(err) {
+                            error = 1;
+                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Could not receive ctrl frame from server." << std::endl;
+                            state = STATE_STOP_CLIENT;
+                        } else
+                            state = STATE_RCV_SRV_IV;
+                        break;
+                    }
+
+                    case STATE_RCV_SRV_IV:
+                    {
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_RCV_SRV_IV" << std::endl;
+                        #endif
+
+                        // set IV on dec for server encryption
+                        err = socketIO->SetIVFromSocket(CNL_RCV);
+                        if(err) {
+                            error = 1;
+                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Could not receive IV from server." << std::endl;
+                            state = STATE_STOP_CLIENT;
+                        } else
+                            state = STATE_SET_INITIAL_KEY;
+                        break;
+                    }
+
+                    case STATE_SET_INITIAL_KEY:
+                    {
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_SET_INITIAL_KEY" << std::endl;
+                        #endif
+
+                        // set encryption keys
+                        switch (info.pv)
+                        {
+                            case PV_X25519:
+                                err = socketIO->PublicKeyExchange();
+                                break;
+
+                            case PV_PSK_X25519:
+                                err = socketIO->EncReadKeyFromFile(info.keyFile);
+                                err |= socketIO->DecReadKeyFromFile(info.keyFile);
+                                err |= socketIO->PublicKeyExchangeAuthenticated();
+                                break;
+                            
+                            default:
+                                err = 1;
+                                break;
+                        }
+  
+                        if(err)
                         {
                             error = 1;
-                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Initial ack error." << std::endl;
+                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Error setting key." << std::endl;
                             state = STATE_STOP_CLIENT;
                         }
                         else
@@ -380,11 +473,15 @@ class DefaultProtocolHandler
 
                     case STATE_SEND_DATA:
                     {
-                        if(mode == MODE_FILE)
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_SEND_DATA" << std::endl;
+                        #endif
+
+                        if(dtype == TYPE_BIN)
                         {
                             err = sendFile();
                         }
-                        else if(mode == MODE_TEXT)
+                        else if(dtype == TYPE_TXT)
                         {
                             err = sendMessage();
                         }
@@ -402,6 +499,10 @@ class DefaultProtocolHandler
 
                     case STATE_RCV_FINAL_ACK:
                     {
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_RCV_FINAL_ACK" << std::endl;
+                        #endif
+
                         ACK_ERROR_CODE ackErr = socketIO->GetAckFromSocket();
                         if(ackErr)
                         {
@@ -413,6 +514,10 @@ class DefaultProtocolHandler
 
                     case STATE_STOP_CLIENT:
                     {
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_STOP_CLIENT" << std::endl;
+                        #endif
+
                         running = false;
                         break;
                     }
@@ -424,24 +529,29 @@ class DefaultProtocolHandler
         }
 
     public:
-        DefaultProtocolHandler(TransferInfo ti) {
+        EncryptedProtocolHandler(TransferInfo ti) {
+
+            #ifdef DEBUG
+            std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::Starting Encrypted Protocol Manager!" << std::endl;
+            #endif
+
             info = ti;
             clientSocket = info.clientSocket;
 
-            socketIO = new SocketIO_Manager(clientSocket, info.secVer);
+            socketIO = new SocketIO_Manager(clientSocket, info.secVer, info.pv);
             DATA_BLOCK_SIZE = socketIO->GetDataBlockSize();
-            encrypted = socketIO->isEncrypted();
                 
             state = STATE_GET_TYPE;
             ctrl_loop();
         }
 
-        ~DefaultProtocolHandler() {
+        ~EncryptedProtocolHandler() {
             delete socketIO;
             if(file_io) delete file_io;
         }
 
         int getErrState() { return error; }
 };
+
 
 #endif

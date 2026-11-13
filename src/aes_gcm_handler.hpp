@@ -90,6 +90,8 @@ class AES_GCM_Encrypt : public EncryptionInterface
         {
             int ret = AESLocal::readAESKey(keyFile, key);
 
+            AESLocal::incrementIV(iv, AES_GCM_IV_SIZE);
+
             // create session key
             AESLocal::deriveKey(key, AES_GCM_KEY_SIZE, iv, AES_GCM_IV_SIZE, sessionKey, AES_GCM_KEY_SIZE);
 
@@ -100,8 +102,16 @@ class AES_GCM_Encrypt : public EncryptionInterface
         {
             memcpy(key, buff, AES_GCM_KEY_SIZE);
 
+            AESLocal::incrementIV(iv, AES_GCM_IV_SIZE);
+
             // create session key
             AESLocal::deriveKey(key, AES_GCM_KEY_SIZE, iv, AES_GCM_IV_SIZE, sessionKey, AES_GCM_KEY_SIZE);
+        }
+
+        // set IV for return channel
+        void setIV(void *buffer) override
+        {
+            memcpy(iv, buffer, AES_GCM_IV_SIZE);
         }
 
         // inBuffer  - plain data
@@ -182,6 +192,8 @@ class AES_GCM_Decrypt : public DecryptionInterface
         {
             int ret = AESLocal::readAESKey(keyFile, key);
 
+            AESLocal::incrementIV(iv, AES_GCM_IV_SIZE);
+
             // create session key
             AESLocal::deriveKey(key, AES_GCM_KEY_SIZE, iv, AES_GCM_IV_SIZE, sessionKey, AES_GCM_KEY_SIZE);
 
@@ -191,6 +203,8 @@ class AES_GCM_Decrypt : public DecryptionInterface
         void setKey(void *buff) override
         {
             memcpy(key, buff, AES_GCM_KEY_SIZE);
+
+            AESLocal::incrementIV(iv, AES_GCM_IV_SIZE);
 
             // create session key
             AESLocal::deriveKey(key, AES_GCM_KEY_SIZE, iv, AES_GCM_IV_SIZE, sessionKey, AES_GCM_KEY_SIZE);

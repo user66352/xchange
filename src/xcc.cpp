@@ -23,11 +23,11 @@ struct CliArgs
     std::string msg = "";
     std::string name = "";
     std::string mode = "";      // [message|file]
-    std::string outfile = "";
+    std::string file = "";
     std::string bandwidth = "";
     std::string encryptionMode = "";
     std::string keyFile = "";
-    std::string whitelist = "";
+    std::string serverPublicKeyFile = "";
     bool progress = false;
     bool stats = false;
     bool help = false;
@@ -90,7 +90,7 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
         if( tmp_str == "-f" || tmp_str == "--file")
         {
             i++;
-            args.outfile = argv[i];
+            args.file = argv[i];
             continue;
         }
 
@@ -133,14 +133,6 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
             continue;
         }
 
-        // read from stdin instead of file, triggers data being send in file mode
-        if ( tmp_str == "--whitelist" )
-        {
-            i++;
-            args.whitelist = argv[i];
-            continue;
-        }
-
         // print help
         if( tmp_str == "-h" || tmp_str == "--help")
         {
@@ -171,18 +163,18 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
         return 0;
     }
 
-    if(args.outfile.size() > 0)
+    if(args.file.size() > 0)
     {
-        if(tool::filename_from_path(args.outfile.c_str()).size() > MAX_FILENAME_LENGTH)
+        if(tool::filename_from_path(args.file.c_str()).size() > MAX_FILENAME_LENGTH)
         {
             std::cerr << "Filename exceeds MAX_FILENAME_LENGTH: " << MAX_FILENAME_LENGTH << std::endl;
             return 1;
         }
     }
 
-    if((args.msg.size() > 0) && (args.outfile.size() > 0))
+    if((args.msg.size() > 0) && (args.file.size() > 0))
     {
-        std::cerr << "Argument Error! Only -f <outfile> or -m <message> is allowed. Not both options at once." << std::endl;
+        std::cerr << "Argument Error! Only -f <file> or -m <message> is allowed. Not both options at once." << std::endl;
         return 1;
     }
 
@@ -192,13 +184,7 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
         return 1;
     }
 
-    if(args.encryptionMode.size() > 0 && args.keyFile.size() == 0)
-    {
-        std::cerr << "Missing encryption key." << std::endl;
-        return 1;
-    }
-
-    if(args.name.size() & args.outfile.size())
+    if(args.name.size() & args.file.size())
     {
         std::cerr << "Filename and name can not be set at the same time." << std::endl;
         return 1;
@@ -206,7 +192,7 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
 
     if(args.readStdin)
     {
-        if(args.outfile.size()) {
+        if(args.file.size()) {
             std::cerr << "Reading a file incompatible to read from stdin." << std::endl;
             return 1;
         }
@@ -221,10 +207,6 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
             return 1;
         }
     }
-
-    #ifdef DEBUG
-    std::cout << "whitelist: " << args.whitelist << std::endl;
-    #endif
 
     return 0;
 }
@@ -264,14 +246,24 @@ int setSecurityVersion(CliArgs args, TransferInfo &transfer_info)
     if (args.encryptionMode.empty())
     {
         transfer_info.secVer = SV_DEFAULT;
-        transfer_info.pv = PV_DEFAULT;
     } else {
         transfer_info.secVer = selectionToSecVersionMap[args.encryptionMode];
-        transfer_info.pv = proVersionLookupMap[transfer_info.secVer];
     }
 
-    if(transfer_info.pv == PV_NONE || transfer_info.secVer == SV_NONE)
+    if(transfer_info.secVer == SV_NONE)
         return 1;
+
+    return 0;
+}
+
+int selectProtocolVersion(CliArgs args, TransferInfo &transfer_info)
+{
+    if(args.keyFile.empty() && args.serverPublicKeyFile.empty())
+    {
+        transfer_info.pv = PV_X25519;
+    } else if(!args.keyFile.empty() && args.serverPublicKeyFile.empty()) {
+        transfer_info.pv = PV_PSK_X25519;
+    } else { return 1; }
 
     return 0;
 }
@@ -285,8 +277,9 @@ int selectProtocolHandler(TransferInfo transfer_info)
     std::cout << "xcc.cpp::selectProtocolHandler::enter selectProtocolHandler" << std::endl;
     #endif
 
-    DefaultProtocolHandler ph_default(transfer_info);
-    return ph_default.getErrState();
+    // DefaultProtocolHandler ph_default(transfer_info);
+    EncryptedProtocolHandler ph_encrypted(transfer_info);
+    return ph_encrypted.getErrState();
 }
 
 int main(int argc, char* argv[])
@@ -318,7 +311,7 @@ int main(int argc, char* argv[])
     transfer_info.read_stdin = params.readStdin;
     if(params.keyFile.size()) transfer_info.keyFile = params.keyFile;
     if(params.msg.size() > 0) transfer_info.msg = params.msg.c_str();
-    if(params.outfile.size() > 0) transfer_info.filePath = params.outfile.c_str();
+    if(params.file.size() > 0) transfer_info.filePath = params.file.c_str();
     if(params.name.size() > 0 && params.readStdin) transfer_info.filePath = params.name.c_str();
     if(params.bandwidth.size() > 0)
     {
@@ -345,13 +338,20 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // set operational mode
+    err = selectProtocolVersion(params, transfer_info);
+    if(err)
+    {
+        std::cerr << "main::ERROR::Protocol version could not be selected." << std::endl;
+        return 1;
+    }
+
+    // set transfer mode
     if(params.readStdin) {
-        if(params.mode == "message") transfer_info.mode = MODE_TEXT;
-        if(params.mode == "file") transfer_info.mode = MODE_FILE;
+        if(params.mode == "message") transfer_info.dtype = TYPE_TXT;
+        else if(params.mode == "file") transfer_info.dtype = TYPE_BIN;
     } else {
-        if(params.msg.size() > 0) transfer_info.mode = MODE_TEXT;
-        if(params.outfile.size() > 0) transfer_info.mode = MODE_FILE;
+        if(params.msg.size() > 0) transfer_info.dtype = TYPE_TXT;
+        else if(params.file.size() > 0) transfer_info.dtype = TYPE_BIN;
     }
 
     // specifying server address

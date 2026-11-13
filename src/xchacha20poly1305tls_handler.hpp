@@ -96,6 +96,8 @@ class XChaCha20Poly1305_Encrypt : public EncryptionInterface
         {
             int ret = XChaLocal::readXChaCha20Key(keyFile, key);
 
+            XChaLocal::incrementIV(iv, XCHACHA20_IV_SIZE);
+
             // create session key
             deriveKey(key, XCHACHA20_KEY_SIZE, iv, XCHACHA20_IV_SIZE, sessionKey, XCHACHA20_KEY_SIZE);
 
@@ -106,8 +108,16 @@ class XChaCha20Poly1305_Encrypt : public EncryptionInterface
         {
             memcpy(key, buff, CHACHA20_KEY_LENGTH);
 
+            XChaLocal::incrementIV(iv, XCHACHA20_IV_SIZE);
+
             // create session key
             deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);
+        }
+
+        // set IV for return channel
+        void setIV(void *buffer) override
+        {
+            memcpy(iv, buffer, XCHACHA20_IV_SIZE);
         }
 
         // inBuffer  - plain data
@@ -190,6 +200,8 @@ class XChaCha20Poly1305_Decrypt : public DecryptionInterface
         {
             int ret = XChaLocal::readXChaCha20Key(keyFile, key);
 
+            XChaLocal::incrementIV(iv, XCHACHA20_IV_SIZE);
+
             // create session key
             deriveKey(key, XCHACHA20_KEY_SIZE, iv, XCHACHA20_IV_SIZE, sessionKey, XCHACHA20_KEY_SIZE);
 
@@ -199,6 +211,8 @@ class XChaCha20Poly1305_Decrypt : public DecryptionInterface
         void setKey(void *buff) override
         {
             memcpy(key, buff, CHACHA20_KEY_LENGTH);
+
+            XChaLocal::incrementIV(iv, XCHACHA20_IV_SIZE);
 
             // create session key
             deriveKey(key, CHACHA20_KEY_LENGTH, iv, CHACHA20_IV_LENGTH, sessionKey, CHACHA20_KEY_LENGTH);

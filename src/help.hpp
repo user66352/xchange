@@ -15,9 +15,11 @@ client [Options] [Data:text|file]\n\n \
                                                 Only required when used with '--stdin file'.\n\n \
 --stdin [message|file]                          If set a message or file will be read from stdin.\n \
                                                 When 'file' is selected also --name must be provided.\n\n \
--e|--encryption <encryption mode>               If ommitted data is transfered as plain text/unencrypted.\n \
+-e|--encryption <encryption mode>               If ommitted data is transfered ChaCha20-Poly1305 encrypted (equal to '-e cha').\n \
                                                 Available encryption modes: 'cha' - ChaCha20-Poly1305, 'xch' - XChaCha20-Poly1305, 'aes' - AES-256-GCM\n\n \
--k|--key <key file>                             Key file used for selected encryption mode.\n\n \
+-k|--key <key file>                             Key file used for selected encryption mode.\n \
+                                                When this key is set xcc will use it to authenticate the key exchange with the server.\n \
+                                                If omitted xcc will default to unauthtenticated key exchange.\n\n \
 -S|--stats                                      Print transfer statistics in file mode. Amount of user data transfered in byte.\n\n \
 -P|--progress                                   Print progress in file mode. Includes --stats. \n\n \
 -b|--bandwidth <bandwidth in byte>              Bytes sent per second in file mode. Used to throttle the transfer throughput.\n\n \
@@ -40,7 +42,15 @@ const char *xcd_help_text =
 -m <msg_file>           - file to store incoming messages, if omitted messages will be printed to stdout\n\
                           incompatible with omitting -o\n\n\
 -e <log_file>           - path to file containing log messages, if omitted errors are redirected to stderr\n\n\
--k <key file>           - Key file used for all encryption methods.\n\n\
+-k <key file>           - Key file used for all encryption methods.\n\
+                          This key is being used to authenticated the public key exchange between client and server (protocol: apsk).\n\n\
+--wl-encryption         - Define a whitelist for allowed encryption methods a client can connect with.\n\
+                          The list must be comma-separated (--wl-encryption aes,xch).\n\n\
+--wl-protocol           - Define a whitelist for allowed protocol versions.\n\
+                          The list must be comma-separated (--wl-protocol uaut,apsk).\n\
+                          In this version only two protocols are implemented: uaut,apsk.\n\
+                          uaut: Unathenticated Public Key Exchange (connect without an pre-shared-key)\n\
+                          apsk: Authenticated Public Key Exchange (authenticated with PSK)\n\n\
 -h                      - print this help\n\n\
 -v                      - print version";
 

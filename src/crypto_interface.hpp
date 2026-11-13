@@ -15,6 +15,7 @@ class EncryptionInterface {
         virtual int getDataFrameSize() = 0;
         virtual int readKey(std::string keyFile) = 0;
         virtual void setKey(void *buff) = 0;
+        virtual void setIV(void *buffer) = 0;
         virtual int encrypt(void *inBuffer, void* outBuffer, size_t length) = 0;
 };
 

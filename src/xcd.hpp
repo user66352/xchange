@@ -19,22 +19,6 @@ class ConnectionManager
         std::atomic<bool> done{false};
         std::jthread worker;
         
-        int pvIsValid(PROTOCOL_VERSION pv)
-        {
-            int valid = 0;
-
-            if(pv > PV_NONE && pv < PV_LAST)
-            {
-                for(PROTOCOL_VERSION ver : PROTOCOL_VERSION_VEC)
-                {
-                    valid = pv == ver;
-                    if(valid) break;
-                }
-            }
-
-            return valid;
-        }
-
         int svIsValid(SECURITY_VERSION sv)
         {
             int valid = 0;
@@ -48,6 +32,18 @@ class ConnectionManager
                 }
             }
 
+            return valid;
+        }
+
+        int pvIsValid(PROTOCOL_VERSION pv)
+        {
+            int valid = 0;
+            if(pv > PV_NONE && pv < PV_LAST) {
+                for(PROTOCOL_VERSION ver : params.allowedProtocolVec) {
+                    valid = pv == ver;
+                    if(valid) break;
+                }
+            }
             return valid;
         }
 
@@ -68,7 +64,7 @@ class ConnectionManager
             }
 
             if(!pvIsValid(ctrl_header.pv)) {
-                *global_info.stderrStream << tool::current_time_string() << "::xcd.hpp::ConnectionManager::ctrlFrameValid::Unsupported protocol version." << std::endl;
+                *global_info.stderrStream << tool::current_time_string() << "::xcd.hpp::ConnectionManager::ctrlFrameValid::Unsupported protocol version or protocol not allowed by whitelist." << std::endl;
                 return 0;
             }
 
@@ -87,14 +83,6 @@ class ConnectionManager
                 {
                     case STATE_RCV_CTRL_FRAME:
                     {
-                        #ifdef DEBUG
-                        std::cout << "DEBUG::ConnectionManager::reading ctrl frame" << std::endl;
-                        #endif
-
-                        #ifdef DEBUG
-                        std::cout << "DEBUG::ConnectionManager::mainLoop::clientSocket: " << (int) clientSocket << std::endl;
-                        #endif
-                        
                         //reading client ctrl_frame from socket
                         int err = sio::read_from_socket(clientSocket, &ctrl_header, CTRL_FRAME_SIZE, MSG_WAITALL);
                         if(!err)
@@ -117,10 +105,10 @@ class ConnectionManager
 
                     case STATE_START_PROTOCOL_MANAGER:
                     {
-                        params.sv = secVersionLookupMap.at(connected_version); // TODO: change to params.sv = connected_version
+                        params.sv = ctrl_header.sv; // TODO: change to params.sv = connected_version
 
-                        DefaultProtocolHandler ph_default(clientSocket, params, ctrl_header);
-                        if(ph_default.getError())
+                        EncryptedProtocolHandler ph_encrypted(clientSocket, params, ctrl_header);
+                        if(ph_encrypted.getError())
                         {
                             *global_info.stderrStream << tool::current_time_string() << "::ConnectionManager::ERROR::DefaultProtocolHandler returned an error." << std::endl;
                             err_state = 1;
@@ -148,11 +136,6 @@ class ConnectionManager
             clientSocket = sock;
             params = p;
             state = STATE_RCV_CTRL_FRAME;
-
-            #ifdef DEBUG
-            std::cout << "DEBUG::ConnectionManager::clientSocket: " << (int) clientSocket << std::endl;
-            #endif
-
             worker = std::jthread{&ConnectionManager::mainLoop, this};
         }
 
