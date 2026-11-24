@@ -52,7 +52,7 @@ server.id:
 ```bash  
 #alias server_ip server_public_key  
 sun 192.168.10.10 YSF5eBIbI4uMAD1CZfkD/iANp0VvE4EOFSBXrudf108=  
-local 127.0.0.1 OwSXIHHfRqxecTCwBng/Lr31xB2Af/dWjX5NxI0LkDM=  
+moon 192.168.10.20 OwSXIHHfRqxecTCwBng/Lr31xB2Af/dWjX5NxI0LkDM=  
 ```  
   
 #### SERVER  
@@ -67,7 +67,8 @@ OwSXIHHfRqxecTCwBng/Lr31xB2Af/dWjX5NxI0LkDM= OBSSUyedldQmlInEWZ/RG9HEnyD86HK7P5d
 client.id:  
   
 ```bash  
-#UID PUBLIC-KEY  
+#UID PUBLIC-KEY
+1333f40c5f96e668f772fd56 Grp/fE1ZtSRb6QPysCu3JhjjVrpgNr7PulEtsRFkNWw=  
 77028f8c4332fcb2c931cb53 C6JGuW7g3ZN8iS4D86kaR+fTlN5NFWFBx2MwM8kI7n0=  
 cf5d6365fb094f0bf0fdfd32 wBS9X+csWGv328ruviU54oV8S062drzxPUzGSpAoISI=  
 ```  
