@@ -9,9 +9,10 @@
 #include <fstream>
 #include <iostream>
 #include <filesystem>
-
 #include <netinet/in.h>
 #include <sys/socket.h>
+
+#define CLIENT
 
 #include "help.hpp"
 #include "xcc_protocol_handler.hpp"
@@ -24,6 +25,7 @@ struct CliArgs
     std::string name = "";
     std::string mode = "";      // [message|file]
     std::string file = "";
+    std::string alias = "";
     std::string bandwidth = "";
     std::string encryptionMode = "";
     std::string keyFile = "";
@@ -33,6 +35,7 @@ struct CliArgs
     bool help = false;
     bool version = false;
     bool readStdin = false;
+    bool printNewID = false;
 };
 
 void printHelp()
@@ -52,6 +55,21 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
             i++;
             args.serverIP = argv[i];
             continue;
+        }
+
+        // server alias
+        if( tmp_str == "--alias" )
+        {
+            i++;
+            args.alias = argv[i];
+            continue;
+        }
+
+        if ( tmp_str == "--print-new-id" )
+        {
+            i++;
+            args.printNewID = true;
+            break;            
         }
 
         // target port
@@ -163,6 +181,16 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
         return 0;
     }
 
+    if(args.printNewID)
+    {
+        if(argc > 2) {
+            std::cerr << "When generating a new ID no other paramter will be considered." << std::endl;
+            return 1;
+        }
+        tool::PrintNewID();
+        return 0;
+    }
+
     if(args.file.size() > 0)
     {
         if(tool::filename_from_path(args.file.c_str()).size() > MAX_FILENAME_LENGTH)
@@ -178,7 +206,7 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
         return 1;
     }
 
-    if(!(args.serverIP.size() > 0))
+    if(!(args.serverIP.size() > 0) && args.alias.empty())
     {
         std::cerr << "Missing Server IP." << std::endl;
         return 1;
@@ -206,6 +234,11 @@ int parseArgs(int argc, char* argv[], CliArgs &args)
             std::cerr << "Stdin message transfere incompatible to option --name." << std::endl;
             return 1;
         }
+    }
+
+    if(!args.alias.empty() && !args.serverIP.empty()) {
+        std::cerr << "Option --alias -s/server ip are mutual exclusive." << std::endl;
+        return 1;
     }
 
     return 0;
@@ -258,11 +291,13 @@ int setSecurityVersion(CliArgs args, TransferInfo &transfer_info)
 
 int selectProtocolVersion(CliArgs args, TransferInfo &transfer_info)
 {
-    if(args.keyFile.empty() && args.serverPublicKeyFile.empty())
+    if(args.keyFile.empty() && args.serverPublicKeyFile.empty() && args.alias.empty())
     {
         transfer_info.pv = PV_X25519;
-    } else if(!args.keyFile.empty() && args.serverPublicKeyFile.empty()) {
+    } else if(!args.keyFile.empty() && args.serverPublicKeyFile.empty() && args.alias.empty()) {
         transfer_info.pv = PV_PSK_X25519;
+    } else if(!args.alias.empty() && args.serverIP.empty()) {
+        transfer_info.pv = PV_KPK_X25519;
     } else { return 1; }
 
     return 0;
@@ -300,8 +335,8 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // exit on help or version
-    if(params.help | params.version) return 0;
+    // exit on help, version or new id
+    if(params.help | params.version | params.printNewID) return 0;
 
     port = getPort(params);
 
@@ -352,6 +387,16 @@ int main(int argc, char* argv[])
     } else {
         if(params.msg.size() > 0) transfer_info.dtype = TYPE_TXT;
         else if(params.file.size() > 0) transfer_info.dtype = TYPE_BIN;
+    }
+
+    // read server ip from file
+    if(transfer_info.pv == PV_KPK_X25519) {
+        params.serverIP = Config_Manager_Client().GetServerIP(params.alias);
+        if(params.serverIP == "") {
+            std::cerr << "Could not extract server ip from config." << std::endl;
+            return 1;
+        }
+        transfer_info.serverAlias = params.alias;
     }
 
     // specifying server address

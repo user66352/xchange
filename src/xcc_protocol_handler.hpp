@@ -12,6 +12,7 @@ enum ProgramState
     STATE_RCV_SRV_IV,
     STATE_RCV_FINAL_ACK,
     STATE_SEND_INIT_CTRL_FRAME,
+    STATE_SEND_UID,
     STATE_SEND_DATA,
     STATE_SET_INITIAL_KEY,
     STATE_STOP_CLIENT
@@ -398,8 +399,31 @@ class EncryptedProtocolHandler
                             std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Could not send ctrl frame." << std::endl;
                             state = STATE_STOP_CLIENT;
                         }
+                        else if(info.pv == PV_KPK_X25519) {
+                            state = STATE_SEND_UID;
+                        } else {
+                            state = STATE_RCV_SRV_CTRL_FRAME;
+                        }
+                                
+                        break;
+                    }
+
+                    case STATE_SEND_UID:
+                    {
+                        #ifdef DEBUG
+                        std::cout << "xcc_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_SEND_UID" << std::endl;
+                        #endif
+                        
+                        err = socketIO->SendClientUID();
+                        if(err)
+                        {
+                            error = 1;
+                            std::cerr << "xcc_protocol_handler.hpp::DefaultProtocolHandler::ctrl_loop::ERROR::Could not send uid." << std::endl;
+                            state = STATE_STOP_CLIENT;
+                        }
                         else
                             state = STATE_RCV_SRV_CTRL_FRAME;
+                        
                         break;
                     }
 
@@ -453,6 +477,11 @@ class EncryptedProtocolHandler
                                 err = socketIO->EncReadKeyFromFile(info.keyFile);
                                 err |= socketIO->DecReadKeyFromFile(info.keyFile);
                                 err |= socketIO->PublicKeyExchangeAuthenticated();
+                                break;
+                            
+                            case PV_KPK_X25519:
+                                err  = socketIO->SetRemotePublicKeyByAlias(info.serverAlias);
+                                err |= socketIO->AuthenticatedKeyExchangeFromConfig();
                                 break;
                             
                             default:

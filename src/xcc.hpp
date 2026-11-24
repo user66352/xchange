@@ -17,6 +17,7 @@ struct TransferInfo
     const char *msg = nullptr;
     const char *filePath = nullptr;
     std::string keyFile = "";
+    std::string serverAlias = "";
     PROTOCOL_VERSION pv = PV_NONE;
     SECURITY_VERSION secVer = SV_NONE;
     TransferMode mode = MODE_NONE;

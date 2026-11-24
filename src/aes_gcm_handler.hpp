@@ -214,7 +214,7 @@ class AES_GCM_Decrypt : public DecryptionInterface
         // outBuffer - buffer receiving the plain data
         // length    - frame length in inBuffer | frame/inBuffer: [data+mac[POLY1305TLS_MAC_SIZE]]
         // returns 1 on success (authenticated), 0 when mac authentication has failed
-        bool decrypt(void *inBuffer, void* outBuffer, size_t length) override
+        bool decrypt(void *inBuffer, void *outBuffer, size_t length) override
         {
             CryptoPP::byte *in = static_cast<CryptoPP::byte *>(inBuffer);
             CryptoPP::byte *out = static_cast<CryptoPP::byte *>(outBuffer);

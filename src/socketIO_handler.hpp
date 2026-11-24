@@ -5,6 +5,7 @@
 
 #include "xcc.hpp"
 #include "crypto_handler.hpp"
+#include "config_handler.hpp"
 
 enum CHANNEL_TYPE
 {
@@ -36,21 +37,44 @@ class PublicKeyManager
     private:
         CryptoPP::x25519 keyx;
         CryptoPP::AutoSeededRandomPool rng;
+        std::unique_ptr<CONFIG_MANAGER> cm = nullptr;
+        CryptoPP::byte remotePublicKey[CryptoPP::x25519::PUBLIC_KEYLENGTH] = { 0 };
         CryptoPP::byte privateKey[CryptoPP::x25519::SECRET_KEYLENGTH] = { 0 };
         CryptoPP::byte publicKey[CryptoPP::x25519::PUBLIC_KEYLENGTH] = { 0 };
         CryptoPP::byte sharedKey[CryptoPP::x25519::SHARED_KEYLENGTH] = { 0 };
 
     public:
-        PublicKeyManager()
-        {
-            keyx.GenerateKeyPair(rng, privateKey, publicKey);
-        }
+        PublicKeyManager() {}
 
         ~PublicKeyManager()
         {
             memset(privateKey, 0x00, CryptoPP::x25519::SECRET_KEYLENGTH);
             memset(publicKey, 0x00, CryptoPP::x25519::PUBLIC_KEYLENGTH);
             memset(sharedKey, 0x00, CryptoPP::x25519::SHARED_KEYLENGTH);
+        }
+
+        void GenerateKeyPair() { keyx.GenerateKeyPair(rng, privateKey, publicKey); }
+
+        int ReadKeysFromLocalConfig()
+        {
+            #ifdef CLIENT
+            cm = std::make_unique<Config_Manager_Client>();
+            #endif
+
+            #ifdef SERVER
+            cm = std::make_unique<Config_Manager_Server>();
+            #endif
+
+            int err = cm->isError();
+            if(!err) 
+                err |= cm->ReadLocalKeys(publicKey, privateKey);
+
+            return err;
+        }
+
+        int ReadRemotePublicKeyFromConfig(std::string uidstr)
+        {
+            return cm->ReadRemotePublicKey(uidstr, remotePublicKey);
         }
 
         int GetSharedKeyLength() { return CryptoPP::x25519::SHARED_KEYLENGTH; }
@@ -68,6 +92,15 @@ class PublicKeyManager
             else
                 return nullptr;
         }
+
+        bool GenerateSharedKeyFromConfig()
+        {
+            return keyx.Agree(sharedKey, privateKey, remotePublicKey);
+        }
+
+        byte *GetSharedKeyPointer() { return sharedKey; }
+
+        std::string GetClientUID() { return cm->GetClientUID(); }
 };
 
 class SocketIO_Manager
@@ -78,6 +111,7 @@ class SocketIO_Manager
         int DATA_BLOCK_SIZE = 0;
         char ioBuffer[MAX_DATA_FRAME_SIZE];
         char plnBuffer[MAX_DATA_FRAME_SIZE + 1];
+        PROTOCOL_VERSION protocol = PV_NONE;
         PublicKeyManager pkm;
         CHANNEL_INFO rcv_chn_info;
         CHANNEL_INFO snd_chn_info;
@@ -91,6 +125,8 @@ class SocketIO_Manager
             int block_size_dec = dec->getDataBlockSize();
             if(block_size_dec == block_size_enc) DATA_BLOCK_SIZE = block_size_enc;
             else error = 1;
+            if(protocol != PV_KPK_X25519) pkm.GenerateKeyPair();
+            else if(protocol == PV_KPK_X25519) error |= pkm.ReadKeysFromLocalConfig();
         }
 
         // return 0 on success, -1 on failure
@@ -149,10 +185,6 @@ class SocketIO_Manager
 
             pkey = pkm.GetPublicKey();
 
-            #ifdef DEBUG
-            std::cout << "socketIO_handler.hpp::SocketIO_Manager::SendLocalPublicKeyEncrypted::local/sent public key:\n" << tool::byteToHex(pkey, CryptoPP::x25519::SHARED_KEYLENGTH, 'l') << std::endl;
-            #endif
-
             data_frame.setFlag(FLAG_KEY_DATA);
             data_frame.setTransmissionID(snd_chn_info.TransmissionID);
             data_frame.setData(pkey, CryptoPP::x25519::PUBLIC_KEYLENGTH);
@@ -179,11 +211,6 @@ class SocketIO_Manager
             CryptoPP::byte *partner_key_pointer = reinterpret_cast<CryptoPP::byte *>(&plnBuffer[DATA_FRAME_HEADER_SIZE]);
 
             if(ReadDataFrame() == CryptoPP::x25519::PUBLIC_KEYLENGTH) {
-
-                #ifdef DEBUG
-                std::cout << "socketIO_handler.hpp::SocketIO_Manager::GenerateSharedKeyAuthenticated::received/remote public key:\n" << tool::byteToHex(partner_key_pointer, CryptoPP::x25519::SHARED_KEYLENGTH, 'l') << std::endl;
-                #endif
-
                 return pkm.GenerateSharedKey(partner_key_pointer);
             }
 
@@ -196,9 +223,12 @@ class SocketIO_Manager
             dec->setKey(sharedKey);
         }
 
+
+
     public:
         SocketIO_Manager(int sock, SECURITY_VERSION sv, PROTOCOL_VERSION pv) {
             ClientSocket = sock;
+            protocol = pv;
             rcv_chn_info.pv = pv;
             rcv_chn_info.sv = sv;
             snd_chn_info.pv = pv;
@@ -226,6 +256,8 @@ class SocketIO_Manager
             rcv_chn_info.frame_order_nbr = nbr;
         }
 
+        int GetFrameOrderRcvChn() { return rcv_chn_info.frame_order_nbr; }
+
         int PublicKeyExchange()
         {
             CryptoPP::byte *sharedKey = nullptr;
@@ -245,10 +277,6 @@ class SocketIO_Manager
                 printError(error_msg);
                 return 1;
             }
-
-            #ifdef DEBUG
-            std::cout << "socketIO_handler.hpp::SocketIO_Manager::PublicKeyExchange::agreed shared key:\n" << tool::byteToHex(sharedKey, CryptoPP::x25519::SHARED_KEYLENGTH, 'l') << std::endl;
-            #endif
 
             SetSharedKey(sharedKey);
 
@@ -273,10 +301,6 @@ class SocketIO_Manager
                 return 1;
             }
 
-            #ifdef DEBUG
-            std::cout << "socketIO_handler.hpp::SocketIO_Manager::PublicKeyExchangeAuthenticated::agreed shared key:\n" << tool::byteToHex(sharedKey, CryptoPP::x25519::SHARED_KEYLENGTH, 'l') << std::endl;
-            #endif
-
             SetSharedKey(sharedKey);
 
             SetFrameOrder(0);
@@ -284,9 +308,64 @@ class SocketIO_Manager
             return 0;
         }
 
-        int GetFrameOrderRcvChn() { return rcv_chn_info.frame_order_nbr; }
+        int AuthenticatedKeyExchangeFromConfig()
+        {
+            #ifdef DEBUG
+            std::cout << "socketIO_handler.hpp::SocketIO_Manager::AuthenticatedKeyExchangeFromConfig::Debug::Entering AuthenticatedKeyExchangeFromConfig." << std::endl;
+            #endif
 
-        int GetFrameOrderSndChn() { return snd_chn_info.frame_order_nbr; }
+            // at this point local and remote public key and local private key need to be set
+            if(!pkm.GenerateSharedKeyFromConfig())
+            {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::AuthenticatedKeyExchangeFromConfig::Error::Shared Key generation failed.";
+                printError(error_msg);
+                return 1;
+            }
+
+            SetSharedKey(pkm.GetSharedKey());
+
+            if(PublicKeyExchangeAuthenticated())
+            {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::AuthenticatedKeyExchangeFromConfig::Error::Public key exchange failed.";
+                printError(error_msg);
+                return 1;
+            }
+
+            return 0;
+        }
+
+        #ifdef CLIENT
+        int SetRemotePublicKeyByAlias(std::string alias)
+        {
+            if(pkm.ReadRemotePublicKeyFromConfig(alias)) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::SetRemotePublicKeyByAlias::Error::Could not read server public key from config!";
+                printError(error_msg);
+                return 1;
+            }
+
+            return 0;
+        }
+        #endif
+
+        // read client uid form socket, read client public key and set in key manager
+        // return 0 on success and 1 on failure
+        int ReadUIDFromSocket() {
+            int err = sio::read_from_socket(ClientSocket, ioBuffer, CLIENT_ID_SIZE, MSG_WAITALL);
+            if(err) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::ReadUIDFromSocket::Error::Could not read client uid from socket!";
+                printError(error_msg);
+                return 1;
+            }
+
+            std::string remoteUidStr = tool::byteToHex(ioBuffer, CLIENT_ID_SIZE, 'l');
+            if(pkm.ReadRemotePublicKeyFromConfig(remoteUidStr)) {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::ReadUIDFromSocket::Error::Could not read client public key from config!";
+                printError(error_msg);
+                return 1;
+            }
+
+            return 0;
+        }
 
         // reads a data frame from socket into plnBuffer
         // returns amount of user data received on success (>0), return value does not include data_header size only the payload size
@@ -387,6 +466,16 @@ class SocketIO_Manager
             return sio::write_to_socket(ClientSocket, sendBuffer, CTRL_FRAME_SIZE + iv_size);
         }
 
+        int SendClientUID() {
+            if(!tool::hexToByte(pkm.GetClientUID(), ioBuffer))
+            {
+                std::string error_msg = "socketIO_handler.hpp::SocketIO_Manager::SendClientUID::Error::Transforming client uid to binary failed.";
+                printError(error_msg);
+                return -1;
+            }
+            return sio::write_to_socket(ClientSocket, ioBuffer, CLIENT_ID_SIZE);
+        }
+
         ACK_ERROR_CODE GetAckFromSocket()
         {
             ACK_FRAME ack;
@@ -413,10 +502,6 @@ class SocketIO_Manager
         {
             ACK_FRAME ack;
             DataFrame data_frame;
-
-            #ifdef DEBUG
-            std::cout << "socketIO_handler.hpp::SendAck::TransmissionID: " << (int) TransmissionID << std::endl;
-            #endif
 
             ack.error = err;
 

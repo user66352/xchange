@@ -6,7 +6,6 @@
 #include <list>
 #include <mutex>
 #include <csignal>
-#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <filesystem>
@@ -15,6 +14,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#define SERVER
 
 #include "xcd.hpp"
 #include "help.hpp"
@@ -102,6 +102,12 @@ int parseArgs(int argc, char* argv[], Parameter &params)
             continue;
         }
 
+        if( tmp_str == "--print-new-id" )
+        {
+            params.PrintNewID = true;
+            break;
+        }
+
         if( tmp_str == "-p" )
         {
             i++;
@@ -154,7 +160,7 @@ int parseArgs(int argc, char* argv[], Parameter &params)
             continue;
         }
 
-        if( tmp_str == "-h" )
+        if( tmp_str == "-h" || tmp_str == "--help" )
         {
             params.help = true;
             break;
@@ -179,10 +185,19 @@ int parseArgs(int argc, char* argv[], Parameter &params)
 }
 
 // check if arguments are coherent/allowed
-int checkArgsPlausibility(Parameter &params)
+int checkArgsPlausibility(Parameter &params, int argc)
 {
     int err_state = 0;
     
+    if(params.PrintNewID)
+    {
+        if(argc > 2) {
+            *global_info.stderrStream << "When requesting a new server identity no other parameter will be considered." << std::endl;
+            err_state = 1;
+        }
+        return 0;
+    }
+
     if(!err_state && params.msgOutFile.size() == 0 && params.outDir.size() == 0)
     {
         *global_info.stderrStream << "Either option -o or -m must be set. xchange will not print files and messages to stdout." << std::endl;
@@ -297,7 +312,7 @@ int main(int argc, char* argv[])
         cleanUp();
         return 1;
     }
-    
+
     // help
     if(params.help)
     {
@@ -312,8 +327,14 @@ int main(int argc, char* argv[])
         return(0);
     }
 
-    int args_err = checkArgsPlausibility(params);
+    int args_err = checkArgsPlausibility(params, argc);
     if(args_err) return 1;
+
+    if(params.PrintNewID)
+    {
+        tool::PrintNewID();
+        return 0;
+    }
 
     // prepare security whitelist
     if(!params.encryptionWhiteList.empty())

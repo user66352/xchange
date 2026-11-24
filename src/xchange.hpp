@@ -16,11 +16,16 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
 #include <errno.h>
 #include <poll.h>
-#include <unistd.h>
 
-std::string program_version_str = "0.2.0";
+#include <cryptopp/xed25519.h>
+#include <cryptopp/osrng.h>
+#include <cryptopp/base64.h>
+#include <cryptopp/filters.h>
+
+std::string program_version_str = "0.2.1";
 
 /* memory size macros */
 #define  B(x)  (x)
@@ -61,15 +66,15 @@ enum PROTOCOL_VERSION : uint16_t
     PV_NONE,
     PV_X25519,              // unauthenticated public key exchange
     PV_PSK_X25519,          // authenticated public key exchange with symmetric pre-shared key
-    //PV_KPK_X25519,          // key exchange with public key provided localy/from file (requires persistent key pair on client/server)
+    PV_KPK_X25519,          // key exchange with public key provided localy/from file (requires persistent key pair on client/server)
     PV_LAST
 };
 
 std::vector<PROTOCOL_VERSION> PROTOCOL_VERSION_VEC =
 {
     PV_X25519,          // unauthenticated key exchange with forward secrecy
-    PV_PSK_X25519       // key xchange with pre-shared key authentication, forward secrecy
-    // PV_KPK_X25519       // key exchange with known public keys (client knows server public key), not yet implemented
+    PV_PSK_X25519,      // key xchange with pre-shared key authentication, forward secrecy
+    PV_KPK_X25519       // key exchange with known public keys (client knows server public key), not yet implemented
 };
 
 // encodes the encryption method used for the protocol in CTRL_FRAME
@@ -79,6 +84,7 @@ enum SECURITY_VERSION : uint8_t
     SV_CHACHA20,
     SV_XCHACHA20POLY,
     SV_AES_GCM,
+    SV_TWO_HMAC,
     SV_LAST
 };
 
@@ -87,18 +93,20 @@ std::vector<SECURITY_VERSION> SECURITY_VERSION_VEC =
     SV_CHACHA20,
     SV_XCHACHA20POLY,
     SV_AES_GCM,
+    SV_TWO_HMAC
 };
 
-std::map<std::string, SECURITY_VERSION> selectionToSecVersionMap = { {"cha", SV_CHACHA20}, {"xch", SV_XCHACHA20POLY}, {"aes", SV_AES_GCM} };
+std::map<std::string, SECURITY_VERSION> selectionToSecVersionMap = { {"cha", SV_CHACHA20}, {"xch", SV_XCHACHA20POLY}, {"aes", SV_AES_GCM}, {"two", SV_TWO_HMAC} };
 
-// uaut: unauthenticated public key exchange
-// apsk: authenticated public key exchange with pre-shared-key
-std::map<std::string, PROTOCOL_VERSION> selectionToProtocolVersionMap = { {"uaut", PV_X25519}, {"apsk", PV_PSK_X25519} };
+// uaut: unauthenticated key exchange
+// apsk: authenticated key exchange with pre-shared-key
+// kpk:  authenticated key exchange with known public key
+std::map<std::string, PROTOCOL_VERSION> selectionToProtocolVersionMap = { {"uaut", PV_X25519}, {"apsk", PV_PSK_X25519}, {"kpk", PV_KPK_X25519} };
 
 //-------------------------------------------------
 //------------ FRAME DEFINITIONS BEGIN ------------
 //-------------------------------------------------
-// all frame structs are packed to make sure they are correctly serialized and de-serialized whene written or read from/to buffer via memcpy
+// all frame structs are packed to make sure they are correctly serialized and de-serialized when written or read from/to buffer via memcpy
 // might need a dedicated serialize/deserialize function for compatibility between different architectures / to guarantee correct reconstruction from buffer
 
 struct __attribute__((__packed__)) CTRL_FRAME
@@ -163,6 +171,7 @@ const int DATA_FRAME_HEADER_SIZE = sizeof(DATA_FRAME_HEADER);
 
 const int MAX_IV_SIZE = 24;                                                     // iv length of XChaCha, set fixed to prevent variable length array warnings
 const int MAX_KEY_SIZE = 32;
+const int CLIENT_ID_SIZE = 12;
 const int MAX_DATA_FRAME_SIZE = MSS;                                            // max bytes send at once as one; considered a frame (meta data/header + user data)
 const int MAX_DATA_BLOCK_SIZE = MAX_DATA_FRAME_SIZE - DATA_FRAME_HEADER_SIZE;   // fit data frame to non-jumbo tcp frame , max user data bytes per frame
 
@@ -390,6 +399,44 @@ namespace tool
     void sleep(int64_t microSec)
     {
         std::this_thread::sleep_for(std::chrono::microseconds(microSec));
+    }
+
+    std::string BinToB64(CryptoPP::byte *block, size_t length)
+    {
+        std::string encoded;
+        CryptoPP::StringSource(block, length, true,
+            new CryptoPP::Base64Encoder(
+                new CryptoPP::StringSink(encoded),
+                false
+            )
+        );
+        return encoded;
+    }
+
+    void PrintNewID()
+    {
+        CryptoPP::x25519 keyx;
+        CryptoPP::AutoSeededRandomPool rng;
+
+        CryptoPP::byte newPublicKey[CryptoPP::x25519::PUBLIC_KEYLENGTH];
+        CryptoPP::byte newPrivateKey[CryptoPP::x25519::PUBLIC_KEYLENGTH];
+
+        keyx.GenerateKeyPair(rng, newPrivateKey, newPublicKey);
+        std::string public_key_b64  = BinToB64(newPublicKey, CryptoPP::x25519::PUBLIC_KEYLENGTH);
+        std::string private_key_b64 = BinToB64(newPrivateKey, CryptoPP::x25519::PUBLIC_KEYLENGTH);
+
+        #ifdef CLIENT
+        CryptoPP::byte clientID[CLIENT_ID_SIZE];
+        rng.GenerateBlock(clientID, CLIENT_ID_SIZE);
+        std::string client_id_str = tool::byteToHex(clientID, CLIENT_ID_SIZE, 'l');
+        std::cout << "#UID PUBLIC-KEY PRIVATE-KEY\n";
+        std::cout << client_id_str << " " << public_key_b64 << " " << private_key_b64 << std::endl;
+        #endif
+
+        #ifdef SERVER
+        std::cout << "#PUBLIC-KEY PRIVATE-KEY\n";
+        std::cout << public_key_b64 << " " << private_key_b64 << std::endl;
+        #endif
     }
 }
 

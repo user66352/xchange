@@ -22,6 +22,7 @@ enum ProgramState
     STATE_SND_IV,
     STATE_FINAL_ACK,
     STATE_READ_IV,
+    STATE_READ_UID,
     STATE_CHACHA20_GET_IV,
     STATE_CHACHA20_READ_KEY_FILE,
     STATE_READ_KEY_FILE,
@@ -46,6 +47,7 @@ struct Parameter
     uint16_t port = DEFAULT_PORT;
     bool help = false;
     bool version = false;
+    bool PrintNewID = false;
 };
 
 
@@ -267,8 +269,28 @@ class EncryptedProtocolHandler
                                 *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::conn_loop::ERROR::Could not set IV for ChaCha20 Cipher." << std::endl;
                                 state = STATE_PM_CLOSE_CONN;
                             }
-                            else
+                            else if(ctrl_frame.pv == PV_KPK_X25519) {
+                                state = STATE_READ_UID;
+                            } else {
                                 state = STATE_ACCEPT_CONNECTION;
+                            }
+                            break;
+                        }
+
+                        case STATE_READ_UID:
+                        {
+                            #ifdef DEBUG
+                            std::cout << "xcd_protocol_handler.hpp::EncryptedProtocolHandler::STATE::STATE_READ_UID" << std::endl;
+                            #endif
+
+                            err = socketIO->ReadUIDFromSocket();
+                            if(err)
+                            {
+                                *global_info.stderrStream << tool::current_time_string() << "::xcd_protocol_handler.hpp::DefaultProtocolHandler::conn_loop::ERROR::Could not set remote public key." << std::endl;
+                                state = STATE_PM_CLOSE_CONN;
+                            } else
+                                state = STATE_ACCEPT_CONNECTION;
+
                             break;
                         }
 
@@ -306,6 +328,10 @@ class EncryptedProtocolHandler
                                     err = socketIO->EncReadKeyFromFile(param.chacha20KeyFile);
                                     err |= socketIO->DecReadKeyFromFile(param.chacha20KeyFile);
                                     err |= socketIO->PublicKeyExchangeAuthenticated();
+                                    break;
+
+                                case PV_KPK_X25519:
+                                    err = socketIO->AuthenticatedKeyExchangeFromConfig();
                                     break;
 
                                 default:

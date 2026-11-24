@@ -1,17 +1,88 @@
 # Change Log  
   
+## Ver. 0.2.1  
+  
+### Added  
+  
+- as an AES alternative xchange now offers Twofish encryption  
+	- Twofish is implemented in CBC mode and uses HMAC for authentication  
+	- on the client it is selected with "--encryption two" or whitlisted on the server with "--wl-encryption two"  
+  
+- xcd is now able to test a clients identity via known public keys  
+	- in this mode a client selects a server via its alias  
+	- based on that alias the servers ip and public key is read from a local file  
+	- the client also now requires its own uid that he transmits to the server to identify itself  
+	- based on that identity the server is looking up the clients public key from a local file  
+	- this way client and server authenticate each other  
+	- when a secure channel is created a new key exchange takes place to create ephemeral keys for the actual data exchange  
+	- a client can have multiple servers defined in its local server.id, one server definition per line  
+	- a server can have multiple clients defined in its local client.id, one client definition per line  
+	- local files:  
+		- client: /home/user/.config/xchange/client/[client.id|server.id]  
+                  client.id:  
+                  **UID-HEX CLIENT-PUBLIC-KEY-BASE64 CLIENT-PRIVATE-KEY-BASE64**  
+                  server.id:  
+                  **SERVER-ALIAS SERVER-IP SERVER-PUBLIC-KEY-BASE64**  
+		- server: /home/user/.config/xchange/server/[client.id|server.id]  
+                  server.id:  
+                  **SERVER-PUBLIC-KEY-BASE64 SERVER-PRIVATE-KEY-BASE64**  
+                  client.id  
+                  **CLIENT-UID-HEX CLIENT-PUBLIC-KEY-BASE64**  
+	- this new protocol can be white-listed on the server with `--wl-protocol kpk`  
+	- it is auto selected on the client when a server is choosen by its alias `xcc --alias server --encryption aes --message "important message"`  
+	- a new option on client and server prints a new local id to stdout `--print-new-id`  
+	- theoretically it can be used to write directly into the local id file to override the existing local id  
+		- `xcc --print-new-id > .config/xchange/client/client.id`  
+		- `xcd --print-new-id > .config/xchange/server/server.id`  
+  
+**Examples:**  
+  
+#### Client  
+  
+client.id:  
+  
+```bash  
+#UID PUBLIC-KEY PRIVATE-KEY  
+1333f40c5f96e668f772fd56 Grp/fE1ZtSRb6QPysCu3JhjjVrpgNr7PulEtsRFkNWw= 8NY3gH7BpEXpqnUWbSpqXNKURoix9ZjZ4mOYyz5+8ns=  
+```  
+  
+server.id:  
+  
+```bash  
+#alias server_ip server_public_key  
+sun 192.168.10.10 YSF5eBIbI4uMAD1CZfkD/iANp0VvE4EOFSBXrudf108=  
+local 127.0.0.1 OwSXIHHfRqxecTCwBng/Lr31xB2Af/dWjX5NxI0LkDM=  
+```  
+  
+#### SERVER  
+  
+server.id:  
+  
+```bash  
+#PUBLIC-KEY PRIVATE-KEY  
+OwSXIHHfRqxecTCwBng/Lr31xB2Af/dWjX5NxI0LkDM= OBSSUyedldQmlInEWZ/RG9HEnyD86HK7P5dnxCS2nn8=  
+```  
+  
+client.id:  
+  
+```bash  
+#UID PUBLIC-KEY  
+77028f8c4332fcb2c931cb53 C6JGuW7g3ZN8iS4D86kaR+fTlN5NFWFBx2MwM8kI7n0=  
+cf5d6365fb094f0bf0fdfd32 wBS9X+csWGv328ruviU54oV8S062drzxPUzGSpAoISI=  
+```  
+  
   
 ## Ver. 0.2.0  
   
 ### Added  
   
-- new option --wl-protocol (protocol whitelist) for the server (xcd)  
+- new option '--wl-protocol' (protocol whitelist) for the server (xcd)  
     - to distinguish between different key exchange methods different protocl versions are now being used  
     - by default xcd will allow clients using all protocols  
-    - --wl-protocol allows to setup a whitelist for key exchange protocls  
-    -available protocols:  
-    - 'uaut': unauthenticated public key exchange (no auth key required)  
-    - 'apsk': public key exchange authenticated with a pre-shared-key, that key needs to be available to client and server  
+    - '--wl-protocol' allows to setup a whitelist for key exchange protocls  
+    - available protocols:  
+    	- 'uaut': unauthenticated public key exchange (no auth key required)  
+    	- 'apsk': public key exchange authenticated with a pre-shared-key, that key needs to be available to client and server  
   
 ### Changed  
   

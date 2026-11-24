@@ -10,6 +10,7 @@ All encryption methods used and developed based on libcrypto++ 8.9.0
 
 #include "aes_gcm_handler.hpp"
 #include "chacha20_handler.hpp"
+#include "twofish_handler.hpp"
 #include "xchacha20poly1305tls_handler.hpp"
 
 class Encryption
@@ -30,6 +31,10 @@ class Encryption
             
             case SV_AES_GCM:
                 enc_ptr = std::make_unique<AES_GCM_Encrypt>();
+                break;
+            
+            case SV_TWO_HMAC:
+                enc_ptr = std::make_unique<TWOFISH_HMAC_Encrypt>();
                 break;
             
             default:
@@ -94,29 +99,41 @@ class Decryption
             {
             case SV_CHACHA20:
 
+                dec_ptr = std::make_unique<ChaCha20_Decrypt>();
+
                 #ifdef DEBUG
-                std::cout << "crypto_handler.hpp::selectDecryptionClass::select chacha!" << std::endl;
+                std::cout << "crypto_handler.hpp::selectDecryptionClass::Selected Decryption Module: " << dec_ptr->getCipherName() << std::endl;
                 #endif
 
-                dec_ptr = std::make_unique<ChaCha20_Decrypt>();
                 break;
 
             case SV_XCHACHA20POLY:
             
+                dec_ptr = std::make_unique<XChaCha20Poly1305_Decrypt>();
+
                 #ifdef DEBUG
-                std::cout << "crypto_handler.hpp::selectDecryptionClass::select xchacha!" << std::endl;
+                std::cout << "crypto_handler.hpp::selectDecryptionClass::Selected Decryption Module: " << dec_ptr->getCipherName() << std::endl;
                 #endif
 
-                dec_ptr = std::make_unique<XChaCha20Poly1305_Decrypt>();
                 break;
 
             case SV_AES_GCM:
+                dec_ptr = std::make_unique<AES_GCM_Decrypt>();
 
                 #ifdef DEBUG
-                std::cout << "crypto_handler.hpp::selectDecryptionClass::select aes!" << std::endl;
+                std::cout << "crypto_handler.hpp::selectDecryptionClass::Selected Decryption Module: " << dec_ptr->getCipherName() << std::endl;
                 #endif
 
-                dec_ptr = std::make_unique<AES_GCM_Decrypt>();
+                break;
+
+            case SV_TWO_HMAC:
+
+                dec_ptr = std::make_unique<TWOFISH_HMAC_Decrypt>();
+
+                #ifdef DEBUG
+                std::cout << "crypto_handler.hpp::selectDecryptionClass::Selected Decryption Module: " << dec_ptr->getCipherName() << std::endl;
+                #endif
+
                 break;
             
             default:
