@@ -14,7 +14,7 @@
 	- the client also now requires its own uid that he transmits to the server to identify itself  
 	- based on that identity the server is looking up the clients public key from a local file  
 	- this way client and server authenticate each other  
-	- when a secure channel is created a new key exchange takes place to create ephemeral keys for the actual data exchange  
+	- when a secure and authenticated channel is created a new key exchange takes place to create ephemeral keys for the actual data exchange  
 	- a client can have multiple servers defined in its local server.id, one server definition per line  
 	- a server can have multiple clients defined in its local client.id, one client definition per line  
 	- local files:  
