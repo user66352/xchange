@@ -29,7 +29,8 @@
                   client.id  
                   **CLIENT-UID-HEX CLIENT-PUBLIC-KEY-BASE64**  
 	- this new protocol can be white-listed on the server with `--wl-protocol kpk`  
-	- it is auto selected on the client when a server is choosen by its alias `xcc --alias server --encryption aes --message "important message"`  
+	- it is auto selected on the client when a server is choosen by its alias:
+   		  `xcc --alias server --encryption aes --message "important message"`  
 	- a new option on client and server prints a new local id to stdout `--print-new-id`  
 	- theoretically it can be used to write directly into the local id file to override the existing local id  
 		- `xcc --print-new-id > .config/xchange/client/client.id`  
