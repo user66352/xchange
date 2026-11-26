@@ -6,7 +6,7 @@
   
 - as an AES alternative xchange now offers Twofish encryption  
 	- Twofish is implemented in CBC mode and uses HMAC for authentication  
-	- on the client it is selected with "--encryption two" or whitlisted on the server with "--wl-encryption two"  
+	- on the client it is selected with "--encryption two" or whitelisted on the server with "--wl-encryption two"  
   
 - xcd is now able to test a clients identity via known public keys  
 	- in this mode a client selects a server via its alias  
@@ -29,7 +29,7 @@
                   client.id  
                   **CLIENT-UID-HEX CLIENT-PUBLIC-KEY-BASE64**  
 	- this new protocol can be white-listed on the server with `--wl-protocol kpk`  
-	- it is auto selected on the client when a server is choosen by its alias:  
+	- it is auto selected on the client when a server is chosen by its alias:  
    		  `xcc --alias server --encryption aes --message "important message"`  
 	- a new option on client and server prints a new local id to stdout `--print-new-id`  
 	- it can be used to write directly into the local id file to override the existing local id  
