@@ -18,12 +18,12 @@
 	- a client can have multiple servers defined in its local server.id, one server definition per line  
 	- a server can have multiple clients defined in its local client.id, one client definition per line  
 	- local files:  
-		- client: /home/user/.config/xchange/client/[client.id|server.id]  
+		- **client:** /home/user/.config/xchange/client/[client.id|server.id]  
                   client.id:  
                   **UID-HEX CLIENT-PUBLIC-KEY-BASE64 CLIENT-PRIVATE-KEY-BASE64**  
                   server.id:  
                   **SERVER-ALIAS SERVER-IP SERVER-PUBLIC-KEY-BASE64**  
-		- server: /home/user/.config/xchange/server/[client.id|server.id]  
+		- **server:** /home/user/.config/xchange/server/[client.id|server.id]  
                   server.id:  
                   **SERVER-PUBLIC-KEY-BASE64 SERVER-PRIVATE-KEY-BASE64**  
                   client.id  
