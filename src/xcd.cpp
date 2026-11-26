@@ -194,8 +194,8 @@ int checkArgsPlausibility(Parameter &params, int argc)
         if(argc > 2) {
             *global_info.stderrStream << "When requesting a new server identity no other parameter will be considered." << std::endl;
             err_state = 1;
-        }
-        return 0;
+        } else
+           return 0;
     }
 
     if(!err_state && params.msgOutFile.size() == 0 && params.outDir.size() == 0)
