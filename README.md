@@ -1,61 +1,55 @@
-## What is xchange?  
+## About  
 
-In short its a client/server application to forward messages and files to a server in a quick and hopefully easy way.  
-I found myself repeatedly sitting at my notebook and wanted to forward a quick message to my main system.  
-For example to bookmark a link at my main machine.  
-Sure I can get up, grab a usb key or open my mail account and send the link to myself.  
-Or finding some document, downloading it to my notebook.  
-Now how do I forward that to my main system with the least amount of effort?  
-I could have pieced together something with netcat or use scp but it just didn’t feel right.  
-So I decided to dig a bit into network programming, stumbled across unix sockets and out came xchange.  
+Xchange is a command line tool consisting of a client (xcc) and server (xcd).  
+It has a very narrow scope: provide a simple way to quickly send files and messages to a remote system while also offer client authentication and strong encryption.  
+Xchange is not a file sharing tool.  
   
   
 ## Features  
-
-Not a lot beyond simple file/message transfer, that was a priority, and with as little additional dependencies as possible.    
-You run the client on a remote machine, provide the server address and your message or file as cmd line argument.  
-On the server received messages can be forwarded to stdout or a dedicated file for later review.  
-For file transfer there is an option to specify a download folder, otherwise files will be just forwarded to stdout.  
-But only messages or files, not both at the same time, can be configured for stdout on the server.  
   
-Messages and files can be send encrypted with ChaCha20-Poly1305, XChaCha20-Poly1305 or AES-256-GCM (all methods provide E2EE).  
-All encrypted data transfers support message authentication.  
-Any tampered packed would trigger an authentication failure on the server.  
-In that case already received data is being dropped.  
-  
-Since xchange does not rely on passwords it uses 32byte keys for encryption.  
-Server and client derive their keys via X25519 key exchange.  
-By default this key exchange is unauthenticated and allows a potential Man-in-the-middle attack.  
-To prevent this server and client should use a pre-shared key that is used for authenticating the key exchange process and ensures an unexpected key replacement would be detected.  
-Xchange provides an option to set a psk for authenticated key exchange.   
-  
-This key should only contain completelly random bytes (not a text file, not typed in by hand).  
-For example such a key file can be created with dd:  
-  
-```dd if=/dev/urandom of=keyfile.bin bs=32 count=1```  
-  
-If no encryption method was specified xcc will default to ChaCha20-Poly1305 encryption.  
-  
-Each transmitted data frame comes with its own checksum and frame counter to guarantee data integrity and in-order frame transfer.  
-That`s already done by TCP but better safe than sorry.  
+- a client connects directly to a remote machine, no relay server, no 3rd party infrastructure or cloud provider required  
+- no passwords, client authentication based on pre-shared keys (symmetric or public keys)  
+	- after initial key setup the client is launched with a single command (+ options) without any further user interaction  
+- GNU-like command line syntax for straightforward script integration  
+- data can be send via a pipe to the client (cat file.dat | xcc ...)  
+- end-to-end encryption with authenticated key exchange (X25519)  
+- forward secrecy with ephemeral keys  
+- uses only strong 256bit keys  
+- within trusted local networks the server can be started without any keys configured  
+	- but without pre-shared keys the key exchange is performed unauthenticated  
+- supports multiple encryption modes (ChaCha, XChaCha, AES, Twofish)  
+	- all modes using message authentication  
+- minimum dependencies, the only non-standard library required is libcrypto++ (ver. 8.9.0)  
+- written for POSIX compliant OS  
   
 Regarding limitations, in its current release state a message can not be longer than 1 data frame.  
-That’s currently at least 1434 Byte per message (depending on the selected encryption, 1450 byte without).  
+That’s currently at least 1413 Byte per message (depending on the selected encryption).  
 So longer messages need to be send as file.  
   
 The largest possible file size is about 6TB.  
-Right now the server closes any transfer after 2³² received frames ((0xffffffff - 1) x (~1.4kB per frame)).   
-  
+Right now the server closes any transfer after 2³² received frames.   
 Up to 10 clients can connect at the same time.  
-  
-Reagarding dependencies, outside of the C/C++ standard library xchange only depends on libcrypto++.  
-It should compile and run on all POSIX compliant systems.  
-  
-Xchange is developed based on libcrypto++ version 8.9.0.  
   
   
 ## Usage  
+  
+A client can choose one out of 3 connection methods:  
+	- authenticated with shared public keys  
+	- authenticated with a shared and secret symmetric key  
+	- unauthenticated but encrypted
 
+To prevent unauthenticated clients whitelist both or one of the protocols supporting authentication.  
+For example `--wl-protocol kpk` will allow only clients whose public key and uid was previously configured on the server.  
+With `--wl-protocol apsk` client and server are using a symmetric key that is the same for all clients.  
+Providing the `--key` option on the client will trigger it to use `apsk`, while using `--alias` instead of a server ip will use mode `kpk` (pre-configured known-public-keys).  
+Not providing a key or an alias will enforce an unauthenticated key exchange.  
+That is only recommended if the server is reachable only from within a trusted local network.  
+In any other case specific keys should be used and enforced by whitelisting only an authenticated protocol on the server.  
+  
+Public keys and local public/private key pairs are stored in /home/user/.config/xchange/[client|server]/.  
+See CHANGELOG.md at version 0.2.1 for a more detailed description of local file/key setup.  
+  
+  
 ### Server (xcd):  
 
 - forward incoming files to a folder, messages printed to stdout/the terminal  
@@ -71,8 +65,15 @@ xcd -o /path/to/received/files
 xcd -i 192.168.55.10 -p 10111 -k keyfile.bin -o /home/user/receivedFilesDir -m /home/user/receivedMessages.txt -e /home/user/xcdlog.txt
 ```  
 
+- xcd writing incoming files to `~/receiveDirectory/`
+- only allow clients with locally known public keys
+
+```bash
+xcd -o ~/receiveDirectory/ --wl-protocol kpk
+```
+  
 - xcd can be stopped by sending SIGINT or CTRL+C on the terminal  
-- though thats not a 'graceful' shutdown yet, it will terminate an ongoing transfer  
+- though thats not a 'graceful' shutdown yet, it will terminate an ongoing transfer 
   
   
 ### Client (xcc):  
@@ -124,6 +125,7 @@ xcc -s 192.168.55.10 -k keyfile.bin -e xch -f /file/to/forward/file.bin
 cat ~/results.csv | xcc -s 192.168.55.10 --stats --key keyfile.bin --encryption aes --stdin file --name results.csv
 ```  
 
+
 - send a message received from a pipe:
 
 ```bash
@@ -131,6 +133,14 @@ echo "highly important message" | xcc -s 192.168.55.10 --key keyfile.bin --encry
 ```  
 
 
+- send file `data.bin` to a server selected by its alias, using Twofish encryption and printing transfer progress
+- `--alias` requires key setup in /home/user/.config/xchange/ for client and server:
+
+```bash
+xcc --alias sun --progress --encryption two --file data.bin
+```
+  
+  
 ## Install  
 
 All thats required is an installed C++ compiler (g++ or clang++) and libcrypto++.  
@@ -138,8 +148,8 @@ All thats required is an installed C++ compiler (g++ or clang++) and libcrypto++
 Install libcrypto++ (Debian 13):  
 
 `sudo apt install libcrypto++-dev libcrypto++8t64`  
-
-
+  
+  
 ### Compilation  
 
 - clone the repo:  
