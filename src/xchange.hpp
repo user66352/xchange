@@ -203,6 +203,8 @@ namespace tool
 
         std::ifstream is(absolute_path, std::ifstream::binary);
 
+        if(!is.is_open()) return 1;
+
         is.read(static_cast<char *>(buffer), key_length);
 
         int return_val = is.gcount() != key_length;
@@ -214,10 +216,10 @@ namespace tool
 
     // splits a list of values inside a string based of the given delimiter
     // returns a vector of substrings
-    std::vector<std::string> splitString(std::string str, char delimiter)
+    std::vector<std::string> splitString(std::string line, char delimiter)
     {
         std::string                   token;
-        std::stringstream             ss(str);
+        std::stringstream             ss(line);
         std::vector<std::string>      tmpVec;
 
         while(std::getline(ss, token, delimiter)) {

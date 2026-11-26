@@ -204,6 +204,15 @@ int checkArgsPlausibility(Parameter &params, int argc)
         err_state = 1;
     }
 
+    if(!err_state && !params.chacha20KeyFile.empty())
+    {
+        std::filesystem::file_status s = std::filesystem::status(params.chacha20KeyFile);
+        if(!std::filesystem::is_regular_file(s)) {
+            *global_info.stderrStream << "Provided symmetric key does not exist." << std::endl;
+            err_state = 1;
+        }
+    }
+
     return err_state;
 }
 
@@ -215,7 +224,7 @@ void CleanUpConnManagerList(ConnManagerList_t *ConnManagerList, std::mutex *lock
         {   // scope required to give the std::lock_guard a limited lifetime
             std::lock_guard<std::mutex> lock(*lockMutex);
         
-            for(auto &cm: *ConnManagerList) {
+            for(auto &cm : *ConnManagerList) {
                 if(cm->isDone()) {
                     int clientSocket = cm->GetClientSocket();
                     if(fcntl(clientSocket, F_GETFD) != -1) {
@@ -228,7 +237,7 @@ void CleanUpConnManagerList(ConnManagerList_t *ConnManagerList, std::mutex *lock
             ConnManagerList->remove(nullptr);
         }
 
-        std::this_thread::sleep_for(seconds(10));   // TODO: create const int for list cleanup time in xchange.hpp
+        std::this_thread::sleep_for(seconds(10));
     }
 }
 
