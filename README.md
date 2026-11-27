@@ -10,7 +10,7 @@ Xchange is not a file sharing tool.
 - a client connects directly to a remote machine, no relay server, no 3rd party infrastructure or cloud provider required  
 - no passwords, client authentication based on pre-shared keys (symmetric or public keys)  
 	- after initial key setup the client is launched with a single command (+ options) without any further user interaction  
-- GNU-like command line syntax for straightforward script integration  
+- GNU-like command line syntax for straightforward script integration/automation  
 - data can be send via a pipe to the client (cat file.dat | xcc ...)  
 - end-to-end encryption with authenticated key exchange (X25519)  
 - forward secrecy with ephemeral keys  
